@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Northline">
+<meta name="theme-color" content="#0b1220">
+<title>Northline Operating System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="boot" class="screen-center"><div class="boot-card"><div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#083332" stroke-width="2"><path d="M3 17h18M5 17V8l7-4 7 4v9M9 17v-4h6v4"/></svg></div><p>Loading Northline…</p>
+<noscript><p><strong>JavaScript is switched off.</strong> Northline needs JavaScript. On iPhone: Settings &gt; Apps &gt; Safari &gt; Advanced &gt; JavaScript.</p></noscript></div></div>
+
+<div id="login" class="hidden">
+  <div class="login-brand">
+    <div>
+      <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#083332" stroke-width="2"><path d="M3 17h18M5 17V8l7-4 7 4v9M9 17v-4h6v4"/></svg></div>
+      <h1>Northline</h1>
+      <p>The operating system for a UK haulage and warehousing company: fleet, stock, people, finance and AI, with a person still on the hook for safety and the operator licence.</p>
+      <div class="login-points">
+        <div><span class="dot"></span>Role-based dashboards for drivers, planners, warehouse, workshop and directors</div>
+        <div><span class="dot"></span>Live staff board for depots, night operations and safety</div>
+        <div><span class="dot"></span>AI that proposes under hard legal limits, then waits for a named approver</div>
+      </div>
+    </div>
+    <p>Secure sign-in. New members are reviewed by an admin before they can see company data.</p>
+  </div>
+  <div class="login-panel">
+    <div class="login-card" id="authCard"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="overlay" id="overlay"></div>
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="shell">
+    <header class="top">
+      <button class="btn tiny menu-btn" id="menuBtn" type="button">Menu</button>
+      <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+        <input id="search" placeholder="Search this page" aria-label="Search" autocomplete="off">
+      </label>
+      <div class="clock" id="clock"></div>
+      <button class="btn tiny" id="signOutBtn" type="button">Sign out</button>
+    </header>
+    <main class="content" id="main"></main>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card" id="modalCard"></div></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
