@@ -1,47 +1,50 @@
-# Northline – connected version (Supabase)
+# Northline – deployment
 
-Branch `real-backend`. The live demo on `main` is untouched until this branch is merged.
+Northline is a multi-company (multi-tenant) SaaS for UK hauliers. Static site + app on GitHub Pages,
+data on Supabase (London region), card payments through Stripe (see `BILLING.md`).
 
-## What is here
+## What is where
 
 | Path | What it is |
 |---|---|
-| `index.html` | The original demo (unchanged). |
-| `app/` | The connected app: `index.html`, `app.js`, `styles.css` + `app.css`, `config.js`, icons. Static files, works on GitHub Pages and iOS Safari. |
-| `app/config.js` | `SUPABASE_URL` and `SUPABASE_ANON_KEY`. Placeholders until `deploy.sh` runs; the app shows "not connected yet" until then. |
-| `supabase/schema.sql` | Tables, role helpers, triggers, Row Level Security policies, grants, realtime. Idempotent. |
-| `supabase/seed.sql` | Illustrative example data, every row flagged `example = true`. Idempotent. |
-| `deploy.sh` | Applies schema + seed via the Management API, fetches URL + anon key, sets auth redirect URLs, writes `app/config.js`. |
-| `supabase/test/`, `tests/local/` | Local-only test harness. Never run `auth_stub.sql` on a real project. |
+| `index.html`, `assets/` | Sales website (pricing, security, FAQ, Book a demo, Start free trial). Contact details in `assets/site-config.js`. |
+| `demo/` | The original offline demo (example data only, no backend). |
+| `app/` | The real app. `app/config.js` holds the Supabase URL + public anon key (written by `deploy.sh`). |
+| `legal/` | Privacy, terms, DPA and cookie pages. **Templates – must be reviewed by a solicitor before selling.** |
+| `supabase/schema.sql` | Base tables, roles, triggers, RLS. Idempotent. |
+| `supabase/migrations/001_multitenancy.sql` | Organisations, `org_id` on every table, tenant-isolation RLS, trials, invites, branding, vehicle limits, platform admin, leads. Idempotent; moves existing rows into "Northline (demo)". |
+| `supabase/migrations/002_driver_tools.sql` | Walkaround checks, defect reports, proof of delivery, private `driver-uploads` storage bucket, alerts. |
+| `supabase/seed.sql` | Example data for the default org only (`example = true`). |
+| `supabase/functions/` | Edge Functions `billing-checkout`, `billing-portal`, `stripe-webhook`. |
+| `deploy.sh` | Applies schema → migrations → seed in one all-or-nothing request, deploys functions, sets auth URLs, writes `app/config.js`. |
+| `supabase/test/`, `tests/local/` | Local test harness only. Never run `auth_stub.sql` or `storage_stub.sql` on a real project. |
 
-## What is needed from the owner
+## How tenancy works
 
-1. A Supabase project (free tier is fine; choose region **West EU (London)** for UK data residency).
-2. Its **project ref** – the 20-character id in the project URL `https://<ref>.supabase.co`.
-3. A **personal access token** – Supabase Dashboard › Account › Access Tokens › Generate (starts `sbp_`).
-   It is only used by `deploy.sh`; it is never written into the site.
+* Every business row has `org_id`. A *restrictive* `tenant_isolation` policy on every table requires
+  `org_id = current_org_id()` (the signed-in user's organisation), on top of the role policies.
+  Writes also require the organisation to be writable (trial not expired, not cancelled).
+* `profiles` is the membership table (one organisation per user). Roles are per organisation.
+* Sign-up paths: **Start free trial** (creates an organisation, 14-day trial, 25-vehicle limit, user is admin),
+  **invite link** (joins that organisation with the invited role), anything else gets an "ask for an invite / start a trial" screen.
+* Platform admins (`platform_admins` table) see the Platform screen: organisations, plans, trial extensions, demo requests.
+  They never see other organisations' operational data.
 
-The anon key and URL are fetched automatically.
-
-## Deploy
+## Deploy / upgrade
 
 ```bash
 SUPABASE_PROJECT_REF=<ref> SUPABASE_ACCESS_TOKEN=<sbp_token> ./deploy.sh
-git add app/config.js && git commit -m "Connect Northline to Supabase" && git push origin real-backend
+git add -A && git commit -m "Deploy" && git push origin main
 ```
 
-Then merge `real-backend` into `main` (GitHub › Pull requests › New pull request › base `main`, compare `real-backend` › Merge).
-GitHub Pages republishes within a couple of minutes. The connected app is at
-`https://josephbickley33-web.github.io/northline-os/app/`; the demo stays at the root.
+Safe to re-run. To upgrade an existing project without touching anything else you can apply only the migrations
+(`supabase/migrations/*.sql`) in the SQL editor. **Back up first** (Dashboard › Database › Backups, or export tables).
 
-Open the app and **Create account first** – the first account becomes the active admin. Everyone after that signs up
-and waits on the "pending approval" screen until an admin approves them in Admin › Members and sets their role.
+Auth: Site URL must be the app URL `https://<user>.github.io/northline-os/app/` with redirect allow-list `…/app/**`.
+For real customers, set up custom SMTP (Dashboard › Authentication › Emails › SMTP) – Supabase's built-in mailer
+is rate-limited to a few emails an hour.
 
-## Notes
+## Tests
 
-- Supabase confirms email addresses by default. Its built-in mailer is rate-limited (a few emails per hour); for a
-  real rollout add SMTP under Authentication › Emails, or switch off "Confirm email" while onboarding staff.
-- Roles and access match the demo: admin, duty, planner, workshop, warehouse, driver. Drivers only ever see their own
-  jobs and hours. All AI approvals go through `decide_ai()`, which writes to the append-only `audit_log`.
-- Admin › Data: CSV import for vehicles, jobs and stock (with templates) and "Remove all example data".
-- Realtime: `board_posts`, `board_replies`, `jobs`, `ai_decisions`.
+`tests/local/README.md` – SQL suites (rls 44, tenant isolation 100, driver tools 16), Deno billing tests (9),
+headless-Chrome end-to-end at desktop and iPhone sizes (70).

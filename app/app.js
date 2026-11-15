@@ -15,22 +15,26 @@ var ICONS = {
   ai:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="7" width="16" height="12" rx="2"/><path d="M9 7V5h6v2M9 13h.01M15 13h.01M9 16h6"/></svg>',
   board:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 5h14v12H7l-2 3V5z"/></svg>',
   info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 8h.01"/></svg>',
-  admin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M4 12h2M18 12h2M12 4v2M12 18v2"/></svg>'
+  admin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M4 12h2M18 12h2M12 4v2M12 18v2"/></svg>',
+  checks:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11l2 2 4-4M9 17h6"/></svg>',
+  platform:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+  bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>'
 };
 var MARK = '<div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#083332" stroke-width="2"><path d="M3 17h18M5 17V8l7-4 7 4v9M9 17v-4h6v4"/></svg></div>';
 // Same map as the demo and as the database policies in supabase/schema.sql
 var ACCESS = {
-  admin:["home","command","network","fleet","people","stock","finance","ai","board","info","admin"],
-  duty:["home","command","network","fleet","people","ai","board","info"],
+  admin:["home","command","network","fleet","checks","people","stock","finance","ai","board","info","admin"],
+  duty:["home","command","network","fleet","checks","people","ai","board","info"],
   planner:["home","command","network","stock","finance","ai","board","info"],
-  workshop:["home","fleet","board","info"],
+  workshop:["home","fleet","checks","board","info"],
   warehouse:["home","stock","board","info"],
-  driver:["home","board","info"]
+  driver:["home","checks","board","info"]
 };
 var ROLE_LABEL = {admin:"Admin",duty:"Duty manager",planner:"Planner",workshop:"Workshop",warehouse:"Warehouse",driver:"Driver"};
 var NAV = [
-  {label:"Work", items:[["home","Home"],["command","Command"],["network","Network"],["fleet","Fleet"],["people","People"],["stock","Stock"],["finance","Finance"],["ai","AI control"]]},
-  {label:"Company", items:[["board","Staff board"],["info","Information"],["admin","Admin"]]}
+  {label:"Work", items:[["home","Home"],["command","Command"],["network","Network"],["fleet","Fleet"],["checks","Checks and defects"],["people","People"],["stock","Stock"],["finance","Finance"],["ai","AI control"]]},
+  {label:"Company", items:[["board","Staff board"],["info","Information"],["admin","Admin"]]},
+  {label:"Northline", items:[["platform","Platform"]]}
 ];
 var JOB_STATUSES = ["Planned","On time","Watch","At risk","Held","Delivered","Cancelled"];
 var VEHICLE_STATUSES = ["Available","On route","Workshop","Off road","Sold"];
@@ -39,13 +43,13 @@ var WEEKLY_LIMIT = 3360; // 56 hours
 
 // CSV import definitions: which columns, how to coerce, and the upsert key.
 var CSV_DEFS = {
-  vehicles: { label:"Vehicles", table:"vehicles", conflict:"reg", required:["reg"],
+  vehicles: { label:"Vehicles", table:"vehicles", conflict:"org_id,reg", match:"reg", required:["reg"],
     cols:{reg:"text",type:"text",depot:"text",status:"text",mot_due:"date",next_service:"date",odometer:"int",notes:"text"},
     roles:["admin","duty","workshop"] },
-  jobs: { label:"Jobs", table:"jobs", conflict:"ref", required:["ref"],
+  jobs: { label:"Jobs", table:"jobs", conflict:"org_id,ref", match:"ref", required:["ref"],
     cols:{ref:"text",customer:"text",origin:"text",destination:"text",pallets:"int",delivery_window:"text",status:"text",vehicle_reg:"text",driver_name:"text",rate_gbp:"num",cost_gbp:"num",notes:"text"},
     roles:["admin","duty","planner"] },
-  stock: { label:"Stock", table:"stock_items", conflict:"sku,depot", required:["sku","name","depot"],
+  stock: { label:"Stock", table:"stock_items", conflict:"org_id,sku,depot", match:"sku,depot", required:["sku","name","depot"],
     cols:{sku:"text",name:"text",depot:"text",qty:"int",reorder_point:"int",location:"text"},
     roles:["admin","planner","warehouse"] }
 };
@@ -55,7 +59,7 @@ var cfg = window.NORTHLINE_CONFIG || {};
 var sb = null;
 var state = { session:null, profile:null, view:"home", search:"", channel:null, info:null,
   adminTab:"members", jobFilter:"all", stockDepot:"all", authTab:"signin", recovery:false,
-  boardUnread:0, live:false };
+  boardUnread:0, live:false, org:null, alerts:[], invite:null, invitePreview:null, platformTab:"orgs" };
 var renderToken = 0;
 var realtimeChannel = null;
 
@@ -66,7 +70,12 @@ function initials(name){ return String(name || "?").split(/\s+/).filter(Boolean)
 function pill(text, tone){ return '<span class="pill ' + (tone || "") + '">' + esc(text) + '</span>'; }
 function head(title, sub, extra){ return '<div class="page-head"><div><h1>' + esc(title) + '</h1><p>' + esc(sub) + '</p></div>' + (extra || "") + '</div>'; }
 function role(){ return state.profile ? state.profile.role : null; }
-function can(view){ var r = role(); return !!(r && ACCESS[r] && ACCESS[r].indexOf(view) >= 0); }
+function can(view){
+  var r = role();
+  if (view === "platform") return !!(r && state.org && state.org.is_platform_admin);
+  if (view === "ai" && state.org && !state.org.has_ai) return false;
+  return !!(r && ACCESS[r] && ACCESS[r].indexOf(view) >= 0);
+}
 function hasRole(){ var r = role(); for (var i = 0; i < arguments.length; i++) if (arguments[i] === r) return true; return false; }
 function gbp(n){ if (n == null || isNaN(n)) return "—"; return "£" + Number(n).toLocaleString("en-GB", {maximumFractionDigits:0}); }
 function num(n){ return n == null ? "—" : Number(n).toLocaleString("en-GB"); }
@@ -154,7 +163,7 @@ function showNotConnected(reason){
     '<p>' + esc(reason) + '</p>' +
     '<p>The app is installed, but it has not been linked to its secure database. Once the administrator finishes setup, this page will show the sign-in screen.</p>' +
     '<ol><li>Create a Supabase project (free tier is fine).</li><li>Run <code>deploy.sh</code> with the project ref and an access token. It loads the database and writes <code>config.js</code>.</li><li>Publish the site. The first person to sign up becomes the admin.</li></ol>' +
-    '<p class="note">Want to look around first? The <a href="../">demo version</a> still works with example data.</p></div>';
+    '<p class="note">Want to look around first? The <a href="../demo/">demo version</a> still works with example data.</p></div>';
 }
 
 // ------------------------------------------------------------------ auth screens
@@ -164,18 +173,31 @@ function showLogin(){
   $("login").className = "";
   renderAuth();
 }
+function authTabs(){
+  if (state.recovery) return [];
+  if (state.invite) return [["invite", state.invitePreview ? "Join " + state.invitePreview.org_name : "Join your team"],["signin","Sign in"],["reset","Forgot password"]];
+  return [["signin","Sign in"],["trial","Start free trial"],["reset","Forgot password"]];
+}
 function renderAuth(msg, tone){
+  var tabsList = authTabs();
   var tab = state.recovery ? "newpass" : state.authTab;
-  var tabs = state.recovery ? "" : '<div class="tabs">' + [["signin","Sign in"],["signup","Create account"],["reset","Forgot password"]].map(function(t){
-    return '<button type="button" data-auth-tab="' + t[0] + '"' + (tab === t[0] ? ' aria-current="true"' : "") + '>' + t[1] + '</button>'; }).join("") + '</div>';
-  var body;
+  if (!state.recovery && !tabsList.some(function(t){ return t[0] === tab; })) tab = state.authTab = tabsList[0][0];
+  var tabs = state.recovery ? "" : '<div class="tabs">' + tabsList.map(function(t){
+    return '<button type="button" data-auth-tab="' + t[0] + '"' + (tab === t[0] ? ' aria-current="true"' : "") + '>' + esc(t[1]) + '</button>'; }).join("") + '</div>';
+  var body, ip = state.invitePreview;
   if (tab === "signin") body = '<h2>Sign in</h2><p class="sub">Use your work email and password.</p>' +
     '<form id="authForm">' + field("Email","email","",{type:"email",required:true}) + field("Password","password","",{type:"password",required:true}) +
-    '<button class="btn primary" type="submit">Sign in</button></form>';
-  else if (tab === "signup") body = '<h2>Create an account</h2><p class="sub">An admin approves new members and sets their role before they can see company data.</p>' +
-    '<form id="authForm">' + field("Full name","full_name","",{required:true}) + field("Work email","email","",{type:"email",required:true}) +
+    '<button class="btn primary" type="submit">Sign in</button></form>' +
+    (state.invite ? "" : '<p class="note" style="margin-top:14px">New company? <a href="#" data-auth-tab="trial">Start a 14-day free trial</a>. Joining a team? Ask your admin for an invite link.</p>');
+  else if (tab === "trial") body = '<h2>Start your free trial</h2><p class="sub">14 days, full Professional features, no card needed. You become the admin of your company\u2019s private workspace.</p>' +
+    '<form id="authForm">' + field("Company name","org_name","",{required:true,placeholder:"e.g. Acme Haulage Ltd"}) + field("Your full name","full_name","",{required:true}) +
+    field("Work email","email","",{type:"email",required:true}) + field("Password (at least 8 characters)","password","",{type:"password",required:true}) +
+    '<button class="btn primary" type="submit">Start free trial</button></form><p class="note" style="margin-top:12px">By starting a trial you agree to the <a href="../legal/terms.html" target="_blank" rel="noopener">terms</a> and <a href="../legal/privacy.html" target="_blank" rel="noopener">privacy policy</a>.</p>';
+  else if (tab === "invite") body = '<h2>' + (ip ? "Join " + esc(ip.org_name) : "Join your team") + '</h2><p class="sub">' +
+    (ip ? "You have been invited as " + esc(ROLE_LABEL[ip.role] || ip.role) + ". Create your login below." : "This invite link may have expired. Ask your admin for a new one, or sign in if you already have an account.") + '</p>' +
+    '<form id="authForm">' + field("Full name","full_name","",{required:true}) + field("Work email","email",ip && ip.email ? ip.email : "",{type:"email",required:true}) +
     field("Password (at least 8 characters)","password","",{type:"password",required:true}) +
-    '<button class="btn primary" type="submit">Create account</button></form>';
+    '<button class="btn primary" type="submit">Create my login</button></form><p class="note" style="margin-top:12px">Already have a Northline login? Use Sign in and the invite is applied automatically.</p>';
   else if (tab === "reset") body = '<h2>Reset your password</h2><p class="sub">We will email you a link. Open it on this device to choose a new password.</p>' +
     '<form id="authForm">' + field("Email","email","",{type:"email",required:true}) + '<button class="btn primary" type="submit">Send reset link</button></form>';
   else body = '<h2>Choose a new password</h2><p class="sub">You opened a password reset link. Set your new password below.</p>' +
@@ -184,29 +206,37 @@ function renderAuth(msg, tone){
   Array.prototype.forEach.call($("authCard").querySelectorAll("input"), function(i){
     if (i.type === "email") i.setAttribute("autocomplete", "email");
     if (i.type === "password") i.setAttribute("autocomplete", tab === "signin" ? "current-password" : "new-password");
-    i.setAttribute("autocapitalize", i.name === "full_name" ? "words" : "none");
+    i.setAttribute("autocapitalize", (i.name === "full_name" || i.name === "org_name") ? "words" : "none");
+    if (i.name === "org_name") i.setAttribute("autocomplete", "organization");
+    if (i.name === "full_name") i.setAttribute("autocomplete", "name");
   });
   $("authForm").onsubmit = function(e){ e.preventDefault(); submitAuth(tab, formValues(e.target), e.target.querySelector("button[type=submit]")); };
   Array.prototype.forEach.call($("authCard").querySelectorAll("[data-auth-tab]"), function(b){
-    b.onclick = function(){ state.authTab = b.dataset.authTab; renderAuth(); };
+    b.onclick = function(e){ e.preventDefault(); state.authTab = b.dataset.authTab; renderAuth(); };
   });
 }
 function redirectUrl(){ return location.origin + location.pathname; }
+var INVITE_KEY = "northline-invite";
+function storeInvite(tok){ try { if (tok) localStorage.setItem(INVITE_KEY, tok); else localStorage.removeItem(INVITE_KEY); } catch (e) {} }
+function storedInvite(){ try { return localStorage.getItem(INVITE_KEY); } catch (e) { return null; } }
 function submitAuth(tab, v, btn){
   var say = function(m, t){ $("authMsg").textContent = m; $("authMsg").className = "msg-line " + (t || ""); };
-  if ((tab === "signup" || tab === "newpass") && (!v.password || v.password.length < 8)) return say("Password must be at least 8 characters.", "err");
+  if ((tab === "trial" || tab === "invite" || tab === "newpass") && (!v.password || v.password.length < 8)) return say("Password must be at least 8 characters.", "err");
+  if (tab === "trial" && (!v.org_name || v.org_name.length < 2)) return say("Enter your company name.", "err");
   btn.disabled = true; say("Working…");
   var p;
   if (tab === "signin") p = sb.auth.signInWithPassword({ email:v.email, password:v.password });
-  else if (tab === "signup") p = sb.auth.signUp({ email:v.email, password:v.password, options:{ data:{ full_name:v.full_name }, emailRedirectTo:redirectUrl() } });
+  else if (tab === "trial") p = sb.auth.signUp({ email:v.email, password:v.password, options:{ data:{ full_name:v.full_name, org_name:v.org_name }, emailRedirectTo:redirectUrl() } });
+  else if (tab === "invite") p = sb.auth.signUp({ email:v.email, password:v.password, options:{ data:{ full_name:v.full_name, invite:state.invite }, emailRedirectTo:redirectUrl() } });
   else if (tab === "reset") p = sb.auth.resetPasswordForEmail(v.email, { redirectTo:redirectUrl() });
   else p = sb.auth.updateUser({ password:v.password });
   p.then(function(res){
     btn.disabled = false;
     if (res.error) return say(friendlyError(res.error), "err");
-    if (tab === "signup") {
-      if (res.data && res.data.session) return say("Account created. Signing you in…", "ok"); // auto-confirmed; onAuthStateChange takes over
-      state.authTab = "signin"; renderAuth("Account created. Check your email for a confirmation link, then sign in.", "ok");
+    if (tab === "trial" || tab === "invite") {
+      if (res.data && res.data.session) return say(tab === "trial" ? "Workspace created. Signing you in…" : "Welcome aboard. Signing you in…", "ok");
+      state.authTab = "signin";
+      renderAuth((tab === "trial" ? "Your company workspace is ready. " : "Your login is ready. ") + "Check your email for a confirmation link, then sign in.", "ok");
     } else if (tab === "reset") say("If that email has an account, a reset link is on its way.", "ok");
     else if (tab === "newpass") { state.recovery = false; toast("Password updated"); afterSession(state.session); }
   }).catch(function(err){ btn.disabled = false; say(friendlyError(err), "err"); });
@@ -220,7 +250,7 @@ function showPending(){
   $("boot").innerHTML = '<div class="status-card" id="pending">' + MARK +
     '<h1>Waiting for approval</h1>' +
     '<p>Thanks' + (p.full_name ? ", " + esc(p.full_name.split(" ")[0]) : "") + '. Your account (' + esc(p.email || (state.session && state.session.user.email) || "") + ') has been created, but an admin needs to approve it and choose your role before you can see company data.</p>' +
-    '<p class="note">Ask your manager or the Northline admin to open Admin, then Members, and approve you.</p>' +
+    '<p class="note">Ask your company admin to open Admin, then Members, and approve you.</p>' +
     '<div class="actions"><button class="btn primary inline" id="checkAgain" type="button">Check again</button><button class="btn inline" id="pendingOut" type="button">Sign out</button></div></div>';
   $("checkAgain").onclick = function(){ afterSession(state.session); };
   $("pendingOut").onclick = signOut;
@@ -228,29 +258,85 @@ function showPending(){
 
 function afterSession(session){
   state.session = session;
-  if (!session) { stopRealtime(); state.profile = null; return showLogin(); }
+  if (!session) { stopRealtime(); state.profile = null; state.org = null; return showLogin(); }
   if (state.recovery) return showLogin();
   sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle().then(function(res){
     if (res.error) { fail(res.error); return showLogin(); }
     state.profile = res.data;
-    if (!res.data || !res.data.active) return showPending();
-    var first = !document.body.classList.contains("app-on");
-    openApp();
-    if (first) sb.rpc("log_audit", { p_action:"Signed in" }).then(function(){});
+    if (!res.data) return showNoOrg();
+    if (!res.data.org_id) {
+      var tok = state.invite || storedInvite();
+      if (tok) return sb.rpc("accept_invite", { p_token:tok }).then(function(r){
+        storeInvite(null); state.invite = null;
+        if (r.error) { toast(friendlyError(r.error), true); return showNoOrg(); }
+        toast("You have joined the team"); afterSession(session);
+      });
+      return showNoOrg();
+    }
+    if (!res.data.active) return showPending();
+    storeInvite(null); state.invite = null;
+    loadOrg().then(function(){
+      var first = !document.body.classList.contains("app-on");
+      openApp();
+      if (first) sb.rpc("log_audit", { p_action:"Signed in" }).then(function(){});
+      var bq = /[?&]billing=(success|cancelled)/.exec(location.search);
+      if (bq && first) { toast(bq[1] === "success" ? "Thank you. Your subscription is being activated." : "Checkout cancelled. Nothing was charged."); state.view = "admin"; state.adminTab = "billing"; renderSidebar(); renderMain();
+        try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+    }).catch(function(err){ fail(err); showLogin(); });
   });
 }
-function signOut(){ stopRealtime(); sb.auth.signOut().then(function(){ state.profile = null; state.view = "home"; showLogin(); }); }
+function loadOrg(){
+  return sb.rpc("org_summary").then(function(res){
+    if (res.error) throw res.error;
+    state.org = (res.data && res.data[0]) || null;
+    applyBrand();
+    return state.org;
+  });
+}
+function hexMix(hex, target, amt){
+  var m = /^#?([0-9a-f]{6})$/i.exec(hex || ""); if (!m) return null;
+  var n = parseInt(m[1], 16), t = parseInt(target.slice(1), 16), out = [16, 8, 0].map(function(sh){
+    var a = (n >> sh) & 255, b = (t >> sh) & 255; return Math.round(a + (b - a) * amt); });
+  return "#" + out.map(function(x){ return ("0" + x.toString(16)).slice(-2); }).join("");
+}
+function applyBrand(){
+  var c = state.org && /^#[0-9a-f]{6}$/i.test(state.org.brand_colour || "") ? state.org.brand_colour : "#0f9d9a";
+  var root = document.documentElement.style;
+  root.setProperty("--accent", c); root.setProperty("--accent-2", hexMix(c, "#000000", .18)); root.setProperty("--accent-soft", hexMix(c, "#ffffff", .85));
+  if (state.org && state.org.name) document.title = state.org.name + " · Northline";
+}
+function showNoOrg(){
+  document.body.classList.remove("app-on");
+  $("login").className = "hidden";
+  var p = state.profile || {};
+  $("boot").className = "screen-center";
+  $("boot").innerHTML = '<div class="status-card" id="noOrg">' + MARK +
+    '<h1>You are not part of a company yet</h1>' +
+    '<p>You are signed in as ' + esc(p.email || (state.session && state.session.user.email) || "") + '. Start a free trial for your company, or join your team with the invite link your admin sent you.</p>' +
+    '<form id="noOrgTrial" style="margin-top:14px">' + field("Company name","org_name","",{required:true,placeholder:"e.g. Acme Haulage Ltd"}) + '<button class="btn primary" type="submit">Start 14-day free trial</button></form>' +
+    '<form id="noOrgInvite" style="margin-top:18px">' + field("Invite link or code","invite","",{required:true,placeholder:"Paste the link from your admin"}) + '<button class="btn" type="submit">Join my team</button></form>' +
+    '<p class="msg-line" id="noOrgMsg"></p><div class="actions"><button class="btn inline" id="noOrgOut" type="button">Sign out</button></div></div>';
+  var say = function(m, t){ $("noOrgMsg").textContent = m; $("noOrgMsg").className = "msg-line " + (t || ""); };
+  $("noOrgTrial").onsubmit = function(e){ e.preventDefault(); var v = formValues(e.target); say("Creating your workspace…");
+    sb.rpc("create_organisation", { p_name:v.org_name }).then(function(r){ if (r.error) return say(friendlyError(r.error), "err"); afterSession(state.session); }); };
+  $("noOrgInvite").onsubmit = function(e){ e.preventDefault(); var v = formValues(e.target); var m = /invite=([A-Za-z0-9]+)/.exec(v.invite || ""), tok = m ? m[1] : String(v.invite || "").trim();
+    say("Joining…"); sb.rpc("accept_invite", { p_token:tok }).then(function(r){ if (r.error) return say(friendlyError(r.error), "err"); afterSession(state.session); }); };
+  $("noOrgOut").onclick = signOut;
+}
+function signOut(){ stopRealtime(); clearTimeout(alertsTimer); sb.auth.signOut().then(function(){ state.profile = null; state.org = null; state.view = "home"; state.alerts = []; applyBrand(); showLogin(); }); }
 
 // ------------------------------------------------------------------ app shell
 function openApp(){
   $("boot").className = "hidden"; $("login").className = "hidden";
   document.body.classList.add("app-on"); document.body.classList.remove("nav-open");
   if (!can(state.view)) state.view = "home";
-  renderSidebar(); renderMain(); startRealtime();
+  renderSidebar(); renderBanner(); renderMain(); startRealtime(); loadAlerts();
 }
+function planLabel(o){ if (!o) return ""; return o.status === "trial" ? "Free trial" : ({starter:"Starter",professional:"Professional",enterprise:"Enterprise",trial:"Trial"}[o.plan] || o.plan); }
 function renderSidebar(){
-  var p = state.profile;
-  var html = '<div class="brand">' + MARK + '<div><strong>Northline</strong><small>Operating system</small></div></div>';
+  var p = state.profile, o = state.org || {};
+  var logo = o.logo_url && /^https:\/\//.test(o.logo_url) ? '<img class="org-logo" src="' + esc(o.logo_url) + '" alt="" onerror="this.style.display=\'none\'">' : MARK;
+  var html = '<div class="brand">' + logo + '<div><strong>' + esc(o.name || "Northline") + '</strong><small>Northline · ' + esc(planLabel(o)) + '</small></div></div>';
   NAV.forEach(function(g){
     var items = g.items.filter(function(i){ return can(i[0]); }); if (!items.length) return;
     html += '<div class="nav-group"><div class="nav-label">' + g.label + '</div>';
@@ -264,10 +350,49 @@ function renderSidebar(){
     '<span class="live-dot' + (state.live ? " on" : "") + '" title="' + (state.live ? "Live updates on" : "Connecting live updates") + '"></span>' + esc(ROLE_LABEL[p.role]) + (p.depot ? " · " + esc(p.depot) : "") + '</small></div></div>';
   $("sidebar").innerHTML = html;
 }
+function renderBanner(){
+  var b = $("orgBanner"); if (!b) return;
+  var o = state.org, html = "";
+  if (o) {
+    var admin = hasRole("admin"), cta = admin ? ' <button class="btn tiny" type="button" data-go-billing>Choose a plan</button>' : "";
+    if (!o.writable && o.status === "trial") html = '<div class="alert bad"><strong>Your free trial has ended.</strong> Your data is safe and read-only. ' + (admin ? "Choose a plan to carry on." : "Ask your admin to choose a plan.") + cta + '</div>';
+    else if (o.status === "cancelled") html = '<div class="alert bad"><strong>Subscription cancelled.</strong> Data is read-only.' + cta + '</div>';
+    else if (o.status === "past_due") html = '<div class="alert warn"><strong>Payment overdue.</strong> ' + (admin ? "Update your card in Admin, then Billing." : "Your admin has been told.") + '</div>';
+    else if (o.status === "trial" && o.trial_days_left != null && o.trial_days_left <= 14) html = '<div class="alert info"><strong>Free trial: ' + o.trial_days_left + ' day' + (o.trial_days_left === 1 ? "" : "s") + ' left.</strong> Everything in Professional is included.' + cta + '</div>';
+  }
+  b.innerHTML = html; b.className = html ? "org-banner" : "org-banner hidden";
+  var g = b.querySelector("[data-go-billing]"); if (g) g.onclick = function(){ state.adminTab = "billing"; go("admin"); };
+}
+// ---- notifications bell
+var alertsTimer = null;
+function loadAlerts(){
+  clearTimeout(alertsTimer);
+  if (!sb || !state.profile || !document.body.classList.contains("app-on")) return;
+  sb.rpc("alerts").then(function(res){
+    if (!res.error) state.alerts = res.data || [];
+    var n = state.alerts.length, c = $("bellCount");
+    if (c) { c.textContent = n > 99 ? "99+" : String(n); c.className = n ? "bell-count" : "bell-count hidden"; }
+    var bb = $("bellBtn"); if (bb) bb.setAttribute("aria-label", n + " notification" + (n === 1 ? "" : "s"));
+  });
+  alertsTimer = setTimeout(loadAlerts, 120000);
+}
+function openAlerts(){
+  var list = state.alerts || [];
+  var order = { bad:0, watch:1 };
+  list = list.slice().sort(function(a, b){ return (order[a.severity] || 2) - (order[b.severity] || 2); });
+  var kinds = { mot:"MOT", stock:"Stock", job:"Jobs", approval:"Approvals", member:"Members", trial:"Billing", defect:"Defects" };
+  openModal('<h2>Notifications</h2><p class="note">MOTs due within 30 days, low stock, late or at-risk jobs, approvals and defects waiting. Updated every two minutes.</p>' +
+    (list.length ? '<div class="rows alert-list">' + list.map(function(a){
+      return '<button class="row" type="button" data-alert-view="' + esc(a.view) + '" style="text-align:left;width:100%"><div><h3>' + pill(kinds[a.kind] || a.kind, a.severity) + ' ' + esc(a.title) + '</h3><p>' + esc(a.detail || "") + '</p></div></button>'; }).join("") + '</div>'
+      : '<div class="card"><p class="note">Nothing needs your attention right now.</p></div>') +
+    '<div class="actions"><button class="btn inline" type="button" data-close>Close</button></div>', function(m){
+    Array.prototype.forEach.call(m.querySelectorAll("[data-alert-view]"), function(b){ b.onclick = function(){ closeModal(); var v = b.dataset.alertView; if (v === "admin" && /Billing/.test(b.textContent)) state.adminTab = "billing"; if (can(v)) go(v); }; });
+  });
+}
 function go(view){
   state.view = view; state.search = ""; $("search").value = "";
   if (view === "board") state.boardUnread = 0;
-  document.body.classList.remove("nav-open"); renderSidebar(); renderMain(); window.scrollTo(0,0);
+  document.body.classList.remove("nav-open"); renderSidebar(); renderBanner(); renderMain(); loadAlerts(); window.scrollTo(0,0);
 }
 function renderMain(){
   var main = $("main"), view = state.view, token = ++renderToken;
@@ -359,13 +484,15 @@ VIEWS.home = function(){
     ]).then(function(a){
       var jobs = a[0], h = a[1][0];
       var left = h ? Math.max(0, DAILY_LIMIT - h.driving_minutes) : null;
-      return title + '<p class="intro">Hello ' + first + '. These are the jobs assigned to you. Tap a status to update the office.</p>' +
+      return title + '<p class="intro">Hello ' + first + '. These are the jobs assigned to you. Tap a status to update the office, or record proof of delivery at the drop.</p>' +
+        '<div class="actions" style="margin-bottom:14px"><button class="btn primary inline" type="button" data-new-check>Start walkaround check</button><button class="btn inline" type="button" data-new-defect>Report a defect</button></div>' +
         '<div class="kpis">' + kpi("Daily driving left", h ? hm(left) : "—", h ? "Of 9h, " + dateUK(h.day) : "No hours record yet", left != null && left <= 30 ? "bad" : "") +
         kpi("Weekly driving", h ? hm(h.weekly_minutes) : "—", "Limit 56h", h && h.weekly_minutes > WEEKLY_LIMIT - 240 ? "warn" : "") +
         kpi("Open jobs", jobs.length, "Assigned to you") + kpi("Breaks today", h ? hm(h.break_minutes) : "—", "45 min due after 4h30 driving") + '</div>' +
         '<section><h2>My jobs</h2>' + (jobs.length ? '<div class="rows">' + jobs.map(function(j){
           return '<div class="row"><div><h3><span class="mono">' + esc(j.ref) + '</span> ' + esc(j.origin) + ' → ' + esc(j.destination) + '</h3><p>' + esc(j.customer || "") + ' · ' + esc(j.delivery_window || "") + ' · ' + esc(j.vehicle_reg || "No vehicle") + (j.notes ? ' · ' + esc(j.notes) : "") + '</p>' +
-            '<div class="row-actions" style="margin-top:8px">' + ["On time","Watch","At risk","Delivered"].map(function(s){ return '<button class="btn tiny' + (j.status === s ? " primary" : "") + '" type="button" data-job-status="' + s + '" data-id="' + j.id + '">' + s + '</button>'; }).join("") + '</div></div>' + pill(j.status, statusTone(j.status)) + '</div>'; }).join("") + '</div>' : emptyCard("No open jobs assigned to you.")) + '</section>' +
+            '<div class="row-actions" style="margin-top:8px">' + ["On time","Watch","At risk"].map(function(s){ return '<button class="btn tiny' + (j.status === s ? " primary" : "") + '" type="button" data-job-status="' + s + '" data-id="' + j.id + '">' + s + '</button>'; }).join("") +
+            '<button class="btn tiny primary" type="button" data-pod="' + j.id + '" data-ref="' + esc(j.ref) + '">Proof of delivery</button></div></div>' + pill(j.status, statusTone(j.status)) + '</div>'; }).join("") + '</div>' : emptyCard("No open jobs assigned to you.")) + '</section>' +
         boardCard(a[2]);
     });
   }
@@ -392,12 +519,13 @@ VIEWS.home = function(){
   return Promise.all(parts).then(function(a){
     var k = a.slice(1).map(function(v, i){ return kpi(kpiDefs[i][0], num(v), kpiDefs[i][1], v > 0 ? kpiDefs[i][2] : ""); }).join("");
     return title + '<p class="intro">Hello ' + first + '. Live figures from the company database.</p><div class="kpis">' + k + '</div>' +
-      '<div class="grid-2"><div class="card"><h3>Shortcuts</h3><div class="rows">' + ACCESS[r].filter(function(v){ return v !== "home"; }).map(function(v){
-        var lab = {command:"Command: exceptions first",network:"Network: jobs and assignments",fleet:"Fleet: vehicles, MOT and service",people:"People: drivers' hours",stock:"Stock: levels and movements",finance:"Finance: revenue and margin",ai:"AI control: approval queue",board:"Staff board",info:"Information",admin:"Admin: members and data"}[v];
+      '<div class="grid-2"><div class="card"><h3>Shortcuts</h3><div class="rows">' + ACCESS[r].concat(can("platform") ? ["platform"] : []).filter(function(v){ return v !== "home" && can(v); }).map(function(v){
+        var lab = {command:"Command: exceptions first",network:"Network: jobs and assignments",fleet:"Fleet: vehicles, MOT and service",people:"People: drivers' hours",stock:"Stock: levels and movements",finance:"Finance: revenue and margin",ai:"AI control: approval queue",board:"Staff board",info:"Information",admin:"Admin: members, billing and data",checks:"Walkaround checks and defects",platform:"Platform: all customer organisations"}[v];
         return '<button class="row" type="button" data-go="' + v + '" style="text-align:left"><span class="shortcut">' + esc(lab) + '</span></button>'; }).join("") + '</div></div>' + boardCard(a[0]) + '</div>';
   });
 };
 BINDERS.home = function(root){
+  bindDriverTools(root);
   Array.prototype.forEach.call(root.querySelectorAll("[data-job-status]"), function(b){
     b.onclick = function(){
       sb.from("jobs").update({ status:b.dataset.jobStatus }).eq("id", Number(b.dataset.id)).then(function(res){
@@ -747,18 +875,23 @@ BINDERS.info = function(root){
 // ---- admin
 VIEWS.admin = function(){
   var tab = state.adminTab;
-  var tabs = '<div class="tabs">' + [["members","Members"],["models","AI gates"],["data","Data and import"],["audit","Audit log"]].map(function(t){
+  var tabs = '<div class="tabs">' + [["members","Members"],["company","Company"],["billing","Billing"],["models","AI gates"],["data","Data and import"],["audit","Audit log"]].map(function(t){
     return '<button type="button" data-admin-tab="' + t[0] + '"' + (tab === t[0] ? ' aria-current="true"' : "") + '>' + t[1] + '</button>'; }).join("") + '</div>';
-  var top = head("Admin","Members, roles, AI gates, data import and the audit trail.") + tabs;
+  var top = head("Admin","Members, invites, branding, billing, AI gates, data import and the audit trail.") + tabs;
+  if (tab === "company") return Promise.resolve(top + companyTab());
+  if (tab === "billing") return billingTab(top);
   if (tab === "members") {
-    return q(sb.from("profiles").select("*").order("active").order("created_at", {ascending:false})).then(function(all){
+    return Promise.all([q(sb.from("profiles").select("*").order("active").order("created_at", {ascending:false})),
+      q(sb.from("org_invites").select("*").eq("revoked", false).is("accepted_at", null).gt("expires_at", new Date().toISOString()).order("created_at", {ascending:false}))]).then(function(res2){
+      var all = res2[0], invites = res2[1];
       var pending = all.filter(function(p){ return !p.active; }), active = all.filter(function(p){ return p.active && matches(p); });
       var roleSel = function(p){ return '<select class="input" style="min-width:140px" data-role-for="' + p.id + '">' + Object.keys(ROLE_LABEL).map(function(k){ return '<option value="' + k + '"' + (p.role === k ? " selected" : "") + '>' + ROLE_LABEL[k] + '</option>'; }).join("") + '</select>'; };
       return top + '<section><h2>Waiting for approval <span class="note">(' + pending.length + ')</span></h2>' +
         (pending.length ? '<div class="rows">' + pending.map(function(p){ return '<div class="row"><div><h3>' + esc(p.full_name || p.email) + '</h3><p>' + esc(p.email) + ' · signed up ' + when(p.created_at) + '</p><div class="row-actions" style="margin-top:8px">' + roleSel(p) +
           '<input class="input" style="max-width:160px" placeholder="Depot" data-depot-for="' + p.id + '" value="' + esc(p.depot || "") + '"></div></div><div class="row-actions"><button class="btn tiny primary" type="button" data-approve="' + p.id + '">Approve</button><button class="btn tiny danger" type="button" data-reject="' + p.id + '">Delete</button></div></div>'; }).join("") + '</div>'
           : emptyCard("Nobody is waiting. New sign-ups appear here.")) + '</section>' +
-        '<section><h2>Active members</h2><p class="intro">To invite someone, send them this page\u2019s link and ask them to tap Create account. They will appear above for approval.</p><div class="scroll"><table class="panel"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Depot</th><th>Title</th><th></th></tr></thead><tbody>' +
+        invitesSection(invites) +
+        '<section><h2>Active members</h2><div class="scroll"><table class="panel"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Depot</th><th>Title</th><th></th></tr></thead><tbody>' +
         active.map(function(p){ var me = p.id === state.profile.id; return '<tr><td>' + esc(p.full_name) + (me ? ' <span class="note">(you)</span>' : "") + '</td><td class="mono">' + esc(p.email) + '</td><td>' + roleSel(p) + '</td><td><input class="input" data-depot-for="' + p.id + '" value="' + esc(p.depot || "") + '"></td><td><input class="input" data-title-for="' + p.id + '" value="' + esc(p.title || "") + '"></td>' +
           '<td><div class="row-actions"><button class="btn tiny" type="button" data-save-member="' + p.id + '">Save</button>' + (me ? "" : '<button class="btn tiny danger" type="button" data-deactivate="' + p.id + '">Suspend</button>') + '</div></td></tr>'; }).join("") + '</tbody></table></div></section>';
     });
@@ -772,9 +905,11 @@ VIEWS.admin = function(){
   if (tab === "data") {
     return Promise.all([countQ(sb.from("jobs").select("id", {count:"exact", head:true}).eq("example", true)), countQ(sb.from("vehicles").select("id", {count:"exact", head:true}).eq("example", true))]).then(function(c){
       return top + '<section><h2>Import your real data (CSV)</h2><p class="intro">Export a spreadsheet as CSV (in Excel or Numbers: Share or Export › CSV), save it to Files, then choose it here. The first row must contain the column names below. Existing rows with the same key are updated.</p><div class="grid-2">' +
-        Object.keys(CSV_DEFS).map(function(k){ var d = CSV_DEFS[k]; return '<div class="card"><h3>' + d.label + '</h3><div class="csv-help">' + Object.keys(d.cols).join(",") + '</div><p class="note">Required: ' + d.required.join(", ") + '. Matches existing rows on ' + d.conflict.replace(",", " + ") + '.</p><div class="actions"><button class="btn primary inline" type="button" data-csv="' + k + '">Import ' + d.label.toLowerCase() + '</button><button class="btn inline" type="button" data-template="' + k + '">Download template</button></div></div>'; }).join("") +
+        Object.keys(CSV_DEFS).map(function(k){ var d = CSV_DEFS[k]; return '<div class="card"><h3>' + d.label + '</h3><div class="csv-help">' + Object.keys(d.cols).join(",") + '</div><p class="note">Required: ' + d.required.join(", ") + '. Matches existing rows on ' + d.match.replace(",", " + ") + '.</p><div class="actions"><button class="btn primary inline" type="button" data-csv="' + k + '">Import ' + d.label.toLowerCase() + '</button><button class="btn inline" type="button" data-template="' + k + '">Download template</button></div></div>'; }).join("") +
         '</div></section>' +
         '<section><h2>Example data</h2><p class="intro">The system started with made-up example rows (' + c[0] + ' jobs, ' + c[1] + ' vehicles still present). Remove them once your real data is in.</p><button class="btn danger inline" type="button" data-clear-example>Remove all example data</button></section>' +
+        '<section><h2>Export your data</h2><p class="intro">Download a CSV copy of your records at any time. Opens in Excel or Numbers.</p><div class="actions">' +
+          Object.keys(CSV_DEFS).map(function(k){ return '<button class="btn inline" type="button" data-export="' + k + '">Export ' + CSV_DEFS[k].label.toLowerCase() + '</button>'; }).join("") + '</div></section>' +
         '<section><h2>Board channels</h2><button class="btn inline" type="button" data-new-channel>Add a channel</button></section>';
     });
   }
@@ -787,6 +922,7 @@ VIEWS.admin = function(){
 };
 BINDERS.admin = function(root){
   Array.prototype.forEach.call(root.querySelectorAll("[data-admin-tab]"), function(b){ b.onclick = function(){ state.adminTab = b.dataset.adminTab; renderMain(); }; });
+  bindInvites(root); bindCompany(root); bindBilling(root);
   var val = function(attr, id){ var el = root.querySelector("[" + attr + '="' + id + '"]'); return el ? (el.value.trim() || null) : undefined; };
   var upd = function(id, patch, msg){ sb.from("profiles").update(patch).eq("id", id).then(function(res){ if (res.error) return fail(res.error); toast(msg); renderMain(); }); };
   Array.prototype.forEach.call(root.querySelectorAll("[data-approve]"), function(b){ b.onclick = function(){ var id = b.dataset.approve; upd(id, { active:true, role:val("data-role-for", id), depot:val("data-depot-for", id) }, "Member approved"); }; });
@@ -800,6 +936,15 @@ BINDERS.admin = function(root){
   Array.prototype.forEach.call(root.querySelectorAll("[data-template]"), function(b){ b.onclick = function(){ var d = CSV_DEFS[b.dataset.template];
     var blob = new Blob([Object.keys(d.cols).join(",") + "\n"], { type:"text/csv" }), a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "northline-" + b.dataset.template + "-template.csv"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-export]"), function(b){ b.onclick = function(){ var d = CSV_DEFS[b.dataset.export];
+    q(sb.from(d.table).select("*").limit(50000)).then(function(rows){
+      var cols = Object.keys(d.cols).concat(["example"]);
+      var cell = function(v){ v = v == null ? "" : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+      var csv = "\uFEFF" + cols.join(",") + "\n" + rows.map(function(r){ return cols.map(function(c){ return cell(r[c]); }).join(","); }).join("\n") + "\n";
+      var blob = new Blob([csv], { type:"text/csv;charset=utf-8" }), a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = "northline-" + b.dataset.export + "-" + new Date().toISOString().slice(0,10) + ".csv"; document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000); toast("Exported " + rows.length + " rows");
+    }).catch(fail); }; });
   var ce = root.querySelector("[data-clear-example]");
   if (ce) ce.onclick = function(){ if (!confirm("Remove every example row (jobs, vehicles, stock, hours, example posts and proposals)? Your own data is kept.")) return;
     sb.rpc("clear_example_data").then(function(res){ if (res.error) return fail(res.error); toast("Example data removed"); renderMain(); }); };
@@ -807,6 +952,311 @@ BINDERS.admin = function(root){
   if (nc) nc.onclick = function(){ openModal('<h2>Add a channel</h2><form id="cForm">' + field("Name","name","",{required:true}) + field("Order","sort",10,{kind:"int"}) + '<div class="actions"><button class="btn primary inline" type="submit">Add</button><button class="btn inline" type="button" data-close>Cancel</button></div></form>', function(m){
     m.querySelector("#cForm").onsubmit = function(e){ e.preventDefault(); var v = formValues(e.target); v.id = v.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || ("c" + Date.now());
       sb.from("board_channels").insert(v).then(function(res){ if (res.error) return fail(res.error); closeModal(); toast("Channel added"); }); }; }); };
+};
+
+// ------------------------------------------------------------------ invites (Admin › Members)
+function inviteLink(tok){ return location.origin + location.pathname + "?invite=" + encodeURIComponent(tok); }
+function invitesSection(invites){
+  var roleOpts = Object.keys(ROLE_LABEL).map(function(k){ return [k, ROLE_LABEL[k]]; });
+  return '<section><h2>Invite staff</h2><p class="intro">Create an invite, then send the link by text, WhatsApp or email. Invited people join your company straight away with the role you pick. Links last 14 days.</p>' +
+    '<div class="card"><form id="inviteForm"><div class="form-grid">' + field("Email (optional: leave blank for a link anyone in your team can use)","email","",{type:"email",full:true}) +
+    field("Role","role","driver",{options:roleOpts}) + '</div><div class="actions"><button class="btn primary inline" type="submit">Create invite</button></div></form></div>' +
+    (invites.length ? '<div class="rows" style="margin-top:12px">' + invites.map(function(i){
+      return '<div class="row"><div><h3>' + esc(i.email || "Open invite link") + ' · ' + esc(ROLE_LABEL[i.role] || i.role) + '</h3><p>Expires ' + when(i.expires_at) + '</p></div><div class="row-actions">' +
+        '<button class="btn tiny" type="button" data-share-invite="' + esc(i.token) + '" data-email="' + esc(i.email || "") + '">Send link</button>' +
+        '<button class="btn tiny danger" type="button" data-revoke-invite="' + esc(i.id) + '">Revoke</button></div></div>'; }).join("") + '</div>' : "") + '</section>';
+}
+function shareInvite(tok, email){
+  var link = inviteLink(tok), org = state.org ? state.org.name : "our company";
+  var text = "You're invited to join " + org + " on Northline. Create your login here: " + link;
+  var mail = "mailto:" + encodeURIComponent(email || "") + "?subject=" + encodeURIComponent("Join " + org + " on Northline") + "&body=" + encodeURIComponent(text);
+  openModal('<h2>Send this invite</h2><p class="note">Anyone with this link can join ' + esc(org) + (email ? " using " + esc(email) : "") + '. Send it only to the person you mean.</p>' +
+    '<label class="field"><span>Invite link</span><input class="input mono" id="inviteLinkBox" readonly value="' + esc(link) + '"></label>' +
+    '<div class="actions">' + (navigator.share ? '<button class="btn primary inline" type="button" id="shareInv">Share…</button>' : "") +
+    '<a class="btn inline" href="' + esc(mail) + '">Email it</a><button class="btn inline" type="button" id="copyInv">Copy link</button><button class="btn inline" type="button" data-close>Done</button></div>', function(m){
+    var sh = m.querySelector("#shareInv"); if (sh) sh.onclick = function(){ navigator.share({ title:"Join " + org + " on Northline", text:text, url:link }).catch(function(){}); };
+    m.querySelector("#copyInv").onclick = function(){ var box = m.querySelector("#inviteLinkBox"); box.select();
+      (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(function(){ toast("Link copied"); }, function(){ try { document.execCommand("copy"); toast("Link copied"); } catch (e) { toast("Press and hold the link to copy it"); } }); };
+  });
+}
+function bindInvites(root){
+  var f = root.querySelector("#inviteForm");
+  if (f) f.onsubmit = function(e){ e.preventDefault(); var v = formValues(e.target);
+    sb.rpc("create_invite", { p_email:v.email, p_role:v.role }).then(function(res){ if (res.error) return fail(res.error);
+      var inv = Array.isArray(res.data) ? res.data[0] : res.data; renderMain(); shareInvite(inv.token, inv.email); }); };
+  Array.prototype.forEach.call(root.querySelectorAll("[data-share-invite]"), function(b){ b.onclick = function(){ shareInvite(b.dataset.shareInvite, b.dataset.email); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-revoke-invite]"), function(b){ b.onclick = function(){ if (!confirm("Revoke this invite? The link will stop working.")) return;
+    sb.from("org_invites").update({ revoked:true }).eq("id", b.dataset.revokeInvite).then(function(res){ if (res.error) return fail(res.error); toast("Invite revoked"); renderMain(); }); }; });
+}
+
+// ------------------------------------------------------------------ company branding (Admin › Company)
+function companyTab(){
+  var o = state.org || {};
+  return '<section><h2>Company details and branding</h2><p class="intro">Your company name, colour and logo appear in the app for all your staff.</p><div class="card"><form id="companyForm"><div class="form-grid">' +
+    field("Company name","name",o.name,{required:true,full:true}) +
+    '<label class="field"><span>Brand colour</span><div style="display:flex;gap:8px"><input type="color" id="brandPicker" value="' + esc(o.brand_colour || "#0f9d9a") + '" style="width:52px;height:42px;border:1px solid var(--line-2);border-radius:10px;padding:2px;background:#fff">' +
+    '<input class="input mono" name="brand_colour" id="brandHex" value="' + esc(o.brand_colour || "#0f9d9a") + '" pattern="#[0-9a-fA-F]{6}" maxlength="7"></div></label>' +
+    field("Logo web address (https://…, square PNG or SVG works best)","logo_url",o.logo_url,{type:"url",placeholder:"https://example.co.uk/logo.png"}) +
+    '</div><div class="actions"><button class="btn primary inline" type="submit">Save branding</button><button class="btn inline" type="button" id="brandReset">Reset to Northline teal</button></div></form></div>' +
+    '<p class="note">Workspace address: <span class="mono">' + esc(o.slug || "") + '</span>. Custom domains (for example <span class="mono">ops.yourcompany.co.uk</span>) are part of the Enterprise plan.</p></section>';
+}
+function bindCompany(root){
+  var f = root.querySelector("#companyForm"); if (!f) return;
+  var pick = root.querySelector("#brandPicker"), hex = root.querySelector("#brandHex");
+  pick.oninput = function(){ hex.value = pick.value; };
+  hex.oninput = function(){ if (/^#[0-9a-f]{6}$/i.test(hex.value)) pick.value = hex.value; };
+  root.querySelector("#brandReset").onclick = function(){ hex.value = pick.value = "#0f9d9a"; };
+  f.onsubmit = function(e){ e.preventDefault(); var v = formValues(e.target);
+    if (!/^#[0-9a-f]{6}$/i.test(v.brand_colour || "")) return toast("Colour must look like #0f9d9a", true);
+    if (v.logo_url && !/^https:\/\//i.test(v.logo_url)) return toast("The logo address must start with https://", true);
+    sb.from("organisations").update({ name:v.name, brand_colour:v.brand_colour.toLowerCase(), logo_url:v.logo_url || null }).eq("id", state.org.id).then(function(res){
+      if (res.error) return fail(res.error);
+      loadOrg().then(function(){ renderSidebar(); toast("Branding saved"); renderMain(); }); }); };
+}
+
+// ------------------------------------------------------------------ billing (Admin › Billing)
+// Placeholder prices for the owner to confirm. GBP, excluding VAT. Stripe holds the real prices.
+var PLAN_INFO = [
+  { id:"starter", name:"Starter", price:19, features:["Fleet, MOT and service tracking","Stock and movements","Staff board and information pages","Driver walkaround checks, defects and proof of delivery"] },
+  { id:"professional", name:"Professional", price:29, features:["Everything in Starter","AI forecasting with conformal intervals","Approval queue with named approvers and audit trail","Notifications for MOT, stock, late jobs and approvals"] },
+  { id:"enterprise", name:"Enterprise", price:39, features:["Everything in Professional","Integrations (telematics, tachograph, WMS, accounts)","Custom domain and branding","Priority support"] }
+];
+function invokeFn(name, body){
+  return sb.functions.invoke(name, { body:body || {} }).then(function(res){
+    if (res.error) {
+      var ctx = res.error.context;
+      if (ctx && typeof ctx.json === "function") return ctx.json().then(function(j){ return { error:j.error || res.error.message, data:j, status:ctx.status }; }, function(){ return { error:res.error.message, status:ctx.status }; });
+      return { error:res.error.message || "Could not reach billing" };
+    }
+    return { data:res.data };
+  }).catch(function(err){ return { error:friendlyError(err) }; });
+}
+function billingTab(top){
+  var o = state.org || {};
+  return loadOrg().then(function(){ o = state.org || {}; return invokeFn("billing-checkout", { action:"status" }); }).then(function(st){
+    var connected = !!(st && st.data && st.data.configured);
+    var status = o.status === "trial" ? (o.writable ? "Free trial" : "Trial ended") : ({active:"Active",past_due:"Payment overdue",cancelled:"Cancelled"}[o.status] || o.status);
+    var limit = o.vehicle_limit == null ? "No limit" : num(o.vehicle_limit);
+    return top + '<div class="kpis">' + kpi("Plan", planLabel(o), status, o.writable ? "" : "bad") +
+      (o.status === "trial" ? kpi("Trial days left", o.trial_days_left == null ? "—" : String(o.trial_days_left), o.trial_ends_at ? "Ends " + when(o.trial_ends_at) : "", o.trial_days_left != null && o.trial_days_left <= 3 ? "bad" : "") : "") +
+      kpi("Vehicles", num(o.vehicles_used) + " / " + limit, "Sold vehicles do not count", o.vehicle_limit != null && o.vehicles_used >= o.vehicle_limit ? "warn" : "") + kpi("Active members", num(o.members), "Unlimited users on every plan") + '</div>' +
+      (connected ? "" : '<div class="alert info" id="billingNotConnected"><strong>Billing not connected yet.</strong> Your free trial keeps working. Card payments switch on once the Stripe account is linked.</div>') +
+      '<section><h2>Plans</h2><p class="intro">Per vehicle, per month, in pounds, excluding VAT. Minimum £149 a month, plus a one-off onboarding fee to import your data. <strong>Placeholder prices, to be confirmed.</strong></p><div class="plan-grid">' +
+      PLAN_INFO.map(function(p){ var current = o.plan === p.id && o.status !== "trial";
+        return '<div class="card plan-card' + (p.id === "professional" ? " featured" : "") + '"><h3>' + p.name + (current ? " " + pill("Current","ok") : "") + '</h3><div class="plan-price">£' + p.price + '<small> / vehicle / month</small></div><ul>' +
+          p.features.map(function(f){ return "<li>" + esc(f) + "</li>"; }).join("") + '</ul><button class="btn ' + (p.id === "professional" ? "primary" : "") + '" type="button" data-plan="' + p.id + '"' + (current ? " disabled" : "") + '>' + (current ? "Your plan" : "Choose " + p.name) + '</button></div>'; }).join("") +
+      '</div></section>' +
+      (o.billing_linked ? '<section><h2>Manage billing</h2><p class="intro">Change card, plan or number of vehicles, and download VAT invoices.</p><button class="btn inline" type="button" data-portal>Open billing portal</button></section>' : "") +
+      '<p class="msg-line" id="billingMsg"></p>';
+  });
+}
+function bindBilling(root){
+  var say = function(m, t){ var el = root.querySelector("#billingMsg"); if (el) { el.textContent = m; el.className = "msg-line " + (t || ""); } };
+  Array.prototype.forEach.call(root.querySelectorAll("[data-plan]"), function(b){ b.onclick = function(){
+    b.disabled = true; say("Opening secure checkout…");
+    invokeFn("billing-checkout", { plan:b.dataset.plan }).then(function(r){
+      b.disabled = false;
+      if (r.data && r.data.url) { location.href = r.data.url; return; }
+      if (r.data && r.data.configured === false) return say("Billing not connected yet. Your free trial keeps working, and nothing has been charged.", "");
+      say(r.error || "Billing not connected yet. Your free trial keeps working.", r.error ? "err" : "");
+    }); }; });
+  var pb = root.querySelector("[data-portal]");
+  if (pb) pb.onclick = function(){ say("Opening billing portal…"); invokeFn("billing-portal", {}).then(function(r){ if (r.data && r.data.url) location.href = r.data.url; else say(r.error || "Billing not connected yet.", "err"); }); };
+}
+
+// ------------------------------------------------------------------ uploads (photos, signatures)
+function uid(){ try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10); }
+function shrinkImage(file, maxSide){
+  maxSide = maxSide || 1600;
+  return new Promise(function(resolve){
+    if (!file || !/^image\//.test(file.type) || !window.FileReader) return resolve(file);
+    var fr = new FileReader();
+    fr.onload = function(){ var img = new Image(); img.onload = function(){
+      var sc = Math.min(1, maxSide / Math.max(img.width, img.height)), c = document.createElement("canvas");
+      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      if (!c.toBlob) return resolve(file);
+      c.toBlob(function(b){ resolve(b && b.size < file.size ? b : file); }, "image/jpeg", .8); };
+      img.onerror = function(){ resolve(file); }; img.src = fr.result; };
+    fr.onerror = function(){ resolve(file); }; fr.readAsDataURL(file);
+  });
+}
+function uploadFile(kind, blob){
+  var ext = /png/.test(blob.type) ? "png" : "jpg";
+  var path = state.profile.org_id + "/" + kind + "/" + uid() + "." + ext;
+  return sb.storage.from("driver-uploads").upload(path, blob, { contentType:blob.type || "image/jpeg", upsert:false }).then(function(res){ if (res.error) throw res.error; return path; });
+}
+function uploadPhotos(kind, input){
+  var files = input && input.files ? Array.prototype.slice.call(input.files, 0, 6) : [];
+  return files.reduce(function(p, f){ return p.then(function(paths){ return shrinkImage(f).then(function(b){ return uploadFile(kind, b); }).then(function(path){ return paths.concat([path]); }); }); }, Promise.resolve([]));
+}
+function photoInput(id){ return '<label class="field full"><span>Photos (optional, up to 6)</span><input class="input" type="file" id="' + id + '" accept="image/*" capture="environment" multiple></label>'; }
+function openPhotos(paths){
+  if (!paths || !paths.length) return;
+  sb.storage.from("driver-uploads").createSignedUrls(paths, 600).then(function(res){
+    if (res.error) return fail(res.error);
+    openModal('<h2>Photos</h2><div class="photo-grid">' + (res.data || []).map(function(x){ return x.signedUrl ? '<a href="' + esc(x.signedUrl) + '" target="_blank" rel="noopener"><img src="' + esc(x.signedUrl) + '" alt="Uploaded photo"></a>' : ""; }).join("") +
+      '</div><div class="actions"><button class="btn inline" type="button" data-close>Close</button></div>');
+  });
+}
+
+// ------------------------------------------------------------------ driver tools
+// DVSA-style daily walkaround items (summary). Not a substitute for the official guide.
+var WALKAROUND = ["Tyres, wheels and wheel fixings","Lights, indicators and reflectors","Mirrors, glass and wipers","Brakes and air lines","Steering","Fuel, oil and AdBlue leaks","Bodywork, doors and load security","Coupling and fifth wheel","Number plates and markings","Horn, dashboard warning lights","Seat belts","Tachograph working"];
+function vehicleSuggestions(){
+  if (hasRole("admin","duty","workshop","planner")) return q(sb.from("vehicles").select("reg").order("reg")).then(function(r){ return r.map(function(v){ return v.reg; }); }).catch(function(){ return []; });
+  return q(sb.from("jobs").select("vehicle_reg").not("vehicle_reg","is",null)).then(function(r){ var seen = {}; return r.map(function(j){ return j.vehicle_reg; }).filter(function(x){ return x && !seen[x] && (seen[x] = 1); }); }).catch(function(){ return []; });
+}
+function regField(list){ return '<label class="field"><span>Vehicle registration</span><input class="input mono" name="vehicle_reg" required list="regList" autocapitalize="characters" placeholder="MX26 ABC"><datalist id="regList">' + list.map(function(r){ return '<option value="' + esc(r) + '">'; }).join("") + '</datalist></label>'; }
+function openCheckForm(){
+  vehicleSuggestions().then(function(regs){
+    openModal('<h2>Walkaround check</h2><p class="note">Check each item before you drive. Tap Defect for anything that is not right; it goes straight to the workshop.</p><form id="checkForm"><div class="form-grid">' + regField(regs) +
+      field("Odometer","odometer","",{kind:"int"}) + '</div><div class="check-list">' + WALKAROUND.map(function(it, i){
+        return '<div class="check-item"><span>' + esc(it) + '</span><div class="seg"><label><input type="radio" name="ci' + i + '" value="ok" checked><span>OK</span></label><label><input type="radio" name="ci' + i + '" value="defect"><span>Defect</span></label></div></div>'; }).join("") + '</div>' +
+      '<div class="form-grid">' + field("Defect severity (if any)","severity","minor",{options:[["minor","Minor: safe to drive, fix soon"],["major","Major: needs fixing before next trip"],["dangerous","Dangerous: do not drive"]]}) +
+      field("Notes","notes","",{textarea:true,full:true}) + photoInput("checkPhotos") + '</div>' +
+      '<div class="actions"><button class="btn primary inline" type="submit">Submit check</button><button class="btn inline" type="button" data-close>Cancel</button></div><p class="msg-line" id="checkMsg"></p></form>', function(m){
+      m.querySelector("#checkForm").onsubmit = function(e){ e.preventDefault();
+        var form = e.target, v = formValues(form), btn = form.querySelector("button[type=submit]");
+        var items = WALKAROUND.map(function(it, i){ var r = form.querySelector('input[name="ci' + i + '"]:checked'); return { item:it, ok:!r || r.value === "ok" }; });
+        var bad = items.filter(function(x){ return !x.ok; });
+        btn.disabled = true; m.querySelector("#checkMsg").textContent = "Uploading…";
+        uploadPhotos("checks", form.querySelector("#checkPhotos")).then(function(paths){
+          return q(sb.from("walkaround_checks").insert({ vehicle_reg:v.vehicle_reg, odometer:v.odometer, items:items, notes:v.notes, photo_paths:paths }).select("id")).then(function(rows){
+            if (!bad.length) return;
+            return q(sb.from("defect_reports").insert({ vehicle_reg:v.vehicle_reg, check_id:rows[0] && rows[0].id, severity:v.severity, photo_paths:paths,
+              description:"Walkaround defects: " + bad.map(function(x){ return x.item; }).join("; ") + (v.notes ? ". " + v.notes : "") }));
+          });
+        }).then(function(){ closeModal(); toast(bad.length ? "Check submitted. Defect sent to the workshop." : "Check submitted. All OK."); renderMain(); loadAlerts(); })
+          .catch(function(err){ btn.disabled = false; m.querySelector("#checkMsg").textContent = ""; fail(err); });
+      };
+    });
+  });
+}
+function openDefectForm(){
+  vehicleSuggestions().then(function(regs){
+    openModal('<h2>Report a defect</h2><form id="defForm"><div class="form-grid">' + regField(regs) +
+      field("Severity","severity","major",{options:[["minor","Minor"],["major","Major"],["dangerous","Dangerous: do not drive"]]}) +
+      field("What is wrong?","description","",{textarea:true,full:true,required:true}) + photoInput("defPhotos") + '</div>' +
+      '<div class="actions"><button class="btn primary inline" type="submit">Send to workshop</button><button class="btn inline" type="button" data-close>Cancel</button></div></form>', function(m){
+      m.querySelector("#defForm").onsubmit = function(e){ e.preventDefault(); var form = e.target, v = formValues(form), btn = form.querySelector("button[type=submit]");
+        if (!v.description || v.description.length < 3) return toast("Describe the defect", true);
+        btn.disabled = true;
+        uploadPhotos("defects", form.querySelector("#defPhotos")).then(function(paths){
+          return q(sb.from("defect_reports").insert({ vehicle_reg:v.vehicle_reg, severity:v.severity, description:v.description, photo_paths:paths }));
+        }).then(function(){ closeModal(); toast("Defect reported"); renderMain(); loadAlerts(); }).catch(function(err){ btn.disabled = false; fail(err); });
+      };
+    });
+  });
+}
+function signaturePad(canvas){
+  var ctx = canvas.getContext("2d"), drawing = false, last = null, inked = false;
+  var size = function(){ var r = canvas.getBoundingClientRect(), d = window.devicePixelRatio || 1; canvas.width = Math.max(1, r.width * d); canvas.height = Math.max(1, r.height * d);
+    ctx.setTransform(d, 0, 0, d, 0, 0); ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = "#0f172a"; ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, r.width, r.height); inked = false; };
+  var pos = function(e){ var r = canvas.getBoundingClientRect(), t = e.touches ? e.touches[0] : e; return { x:t.clientX - r.left, y:t.clientY - r.top }; };
+  var start = function(e){ e.preventDefault(); drawing = true; last = pos(e); };
+  var move = function(e){ if (!drawing) return; e.preventDefault(); var p = pos(e); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; inked = true; };
+  var end = function(){ drawing = false; };
+  if (window.PointerEvent) { canvas.addEventListener("pointerdown", start); canvas.addEventListener("pointermove", move); window.addEventListener("pointerup", end); }
+  else { canvas.addEventListener("touchstart", start); canvas.addEventListener("touchmove", move); canvas.addEventListener("touchend", end); canvas.addEventListener("mousedown", start); canvas.addEventListener("mousemove", move); window.addEventListener("mouseup", end); }
+  setTimeout(size, 30);
+  return { clear:size, hasInk:function(){ return inked; }, toBlob:function(){ return new Promise(function(res){ canvas.toBlob ? canvas.toBlob(res, "image/png") : res(null); }); } };
+}
+function openPodForm(jobId, ref){
+  openModal('<h2>Proof of delivery · <span class="mono">' + esc(ref || "") + '</span></h2><p class="note">Hand the phone to the receiver to sign. This marks the job delivered and tells the office.</p><form id="podForm">' +
+    field("Received by (name)","received_by","",{required:true}) +
+    '<label class="field"><span>Signature</span><canvas id="sigPad" class="sig-pad" aria-label="Signature pad"></canvas></label><div class="actions" style="margin-top:4px"><button class="btn tiny" type="button" id="sigClear">Clear signature</button></div>' +
+    '<div class="form-grid">' + field("Notes (shortages, damage, clausing)","notes","",{textarea:true,full:true}) + photoInput("podPhotos") + '</div>' +
+    '<div class="actions"><button class="btn primary inline" type="submit">Confirm delivery</button><button class="btn inline" type="button" data-close>Cancel</button></div><p class="msg-line" id="podMsg"></p></form>', function(m){
+    var pad = signaturePad(m.querySelector("#sigPad"));
+    m.querySelector("#sigClear").onclick = function(){ pad.clear(); };
+    m.querySelector("#podForm").onsubmit = function(e){ e.preventDefault(); var form = e.target, v = formValues(form), btn = form.querySelector("button[type=submit]");
+      if (!pad.hasInk()) return toast("Ask the receiver to sign first", true);
+      btn.disabled = true; m.querySelector("#podMsg").textContent = "Saving…";
+      pad.toBlob().then(function(blob){ return blob ? uploadFile("pod", blob) : null; }).then(function(sigPath){
+        return uploadPhotos("pod", form.querySelector("#podPhotos")).then(function(paths){
+          return q(sb.from("delivery_proofs").insert({ job_id:jobId, received_by:v.received_by, signature_path:sigPath, photo_paths:paths, notes:v.notes }));
+        });
+      }).then(function(){ closeModal(); toast("Delivery confirmed"); renderMain(); }).catch(function(err){ btn.disabled = false; m.querySelector("#podMsg").textContent = ""; fail(err); });
+    };
+  });
+}
+function bindDriverTools(root){
+  var c = root.querySelector("[data-new-check]"); if (c) c.onclick = openCheckForm;
+  var d = root.querySelector("[data-new-defect]"); if (d) d.onclick = openDefectForm;
+  Array.prototype.forEach.call(root.querySelectorAll("[data-pod]"), function(b){ b.onclick = function(){ openPodForm(Number(b.dataset.pod), b.dataset.ref); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-photos]"), function(b){ b.onclick = function(){ try { openPhotos(JSON.parse(b.dataset.photos)); } catch (e) {} }; });
+}
+
+VIEWS.checks = function(){
+  var fleetRole = hasRole("admin","duty","workshop"), office = hasRole("admin","duty","planner");
+  return Promise.all([
+    q(sb.from("defect_reports").select("*").order("created_at", {ascending:false}).limit(100)),
+    q(sb.from("walkaround_checks").select("*").order("created_at", {ascending:false}).limit(50)),
+    office ? q(sb.from("delivery_proofs").select("*").order("created_at", {ascending:false}).limit(30)) : Promise.resolve([])
+  ]).then(function(a){
+    var defects = a[0].filter(matches), checks = a[1].filter(matches), pods = a[2];
+    var open = defects.filter(function(x){ return x.status !== "fixed"; });
+    var photosBtn = function(p){ return p && p.length ? '<button class="btn tiny" type="button" data-photos="' + esc(JSON.stringify(p)) + '">' + p.length + ' photo' + (p.length === 1 ? "" : "s") + '</button>' : ""; };
+    var sevTone = { minor:"watch", major:"bad", dangerous:"bad" };
+    return head("Checks and defects", fleetRole ? "Daily walkaround checks, defects for the workshop and proofs of delivery." : "Your walkaround checks and defect reports.",
+        '<div class="actions"><button class="btn primary inline" type="button" data-new-check>Start walkaround check</button><button class="btn inline" type="button" data-new-defect>Report a defect</button></div>') +
+      '<div class="kpis">' + kpi("Open defects", num(open.length), "Not yet fixed", open.length ? "warn" : "") + kpi("Dangerous", num(open.filter(function(x){ return x.severity === "dangerous"; }).length), "Vehicle must not be driven", "bad") +
+        kpi("Checks (latest 50)", num(checks.length), checks.filter(function(c){ return c.defects_found; }).length + " with defects") + '</div>' +
+      '<section><h2>Defects</h2>' + (defects.length ? '<div class="rows">' + defects.map(function(x){
+        return '<div class="row"><div><h3><span class="mono">' + esc(x.vehicle_reg) + '</span> ' + pill(x.severity, sevTone[x.severity]) + ' ' + esc(x.description) + '</h3><p>' + esc(x.reporter_name || "") + ' · ' + when(x.created_at) + (x.resolution ? ' · ' + esc(x.resolution) : "") + '</p></div><div class="row-actions">' + photosBtn(x.photo_paths) +
+          (fleetRole ? '<select class="input" style="min-width:130px" data-defect-status="' + x.id + '">' + [["open","Open"],["in_progress","In progress"],["fixed","Fixed"]].map(function(o){ return '<option value="' + o[0] + '"' + (x.status === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select>' : pill(x.status.replace("_"," "), statusTone(x.status))) + '</div></div>'; }).join("") + '</div>' : emptyCard("No defects reported.")) + '</section>' +
+      '<section><h2>Walkaround checks</h2>' + (checks.length ? '<div class="scroll"><table class="panel"><thead><tr><th>When</th><th>Vehicle</th><th>Driver</th><th class="right">Odometer</th><th>Result</th><th></th></tr></thead><tbody>' + checks.map(function(c){
+        return '<tr><td class="mono">' + when(c.created_at) + '</td><td class="mono">' + esc(c.vehicle_reg) + '</td><td>' + esc(c.driver_name || "") + '</td><td class="right">' + num(c.odometer) + '</td><td>' + (c.defects_found ? pill("Defects","bad") : pill("All OK","ok")) + '</td><td>' + photosBtn(c.photo_paths) + '</td></tr>'; }).join("") + '</tbody></table></div>' : emptyCard("No checks yet.")) + '</section>' +
+      (office ? '<section><h2>Proofs of delivery</h2>' + (pods.length ? '<div class="rows">' + pods.map(function(p){
+        return '<div class="row"><div><h3>Job #' + esc(p.job_id) + ' · received by ' + esc(p.received_by) + '</h3><p>' + esc(p.created_by_name || "") + ' · ' + when(p.created_at) + (p.notes ? ' · ' + esc(p.notes) : "") + '</p></div><div class="row-actions">' +
+          (p.signature_path ? '<button class="btn tiny" type="button" data-photos="' + esc(JSON.stringify([p.signature_path])) + '">Signature</button>' : "") + photosBtn(p.photo_paths) + '</div></div>'; }).join("") + '</div>' : emptyCard("No proofs of delivery yet.")) + '</section>' : "");
+  });
+};
+BINDERS.checks = function(root){
+  bindDriverTools(root);
+  Array.prototype.forEach.call(root.querySelectorAll("[data-defect-status]"), function(sel){ sel.onchange = function(){
+    var patch = { status:sel.value }; if (sel.value === "fixed") { var r = prompt("What was done? (optional)"); if (r) patch.resolution = r; }
+    sb.from("defect_reports").update(patch).eq("id", Number(sel.dataset.defectStatus)).then(function(res){ if (res.error) return fail(res.error); toast("Defect updated"); loadAlerts(); renderMain(); }); }; });
+};
+
+// ------------------------------------------------------------------ platform (product owner only)
+VIEWS.platform = function(){
+  var tab = state.platformTab;
+  var tabs = '<div class="tabs">' + [["orgs","Organisations"],["leads","Demo requests"]].map(function(t){ return '<button type="button" data-platform-tab="' + t[0] + '"' + (tab === t[0] ? ' aria-current="true"' : "") + '>' + t[1] + '</button>'; }).join("") + '</div>';
+  var top = head("Platform","Every customer organisation on Northline. Only platform admins see this page; it never shows customers\u2019 operational data.") + tabs;
+  if (tab === "leads") return q(sb.rpc("platform_leads")).then(function(rows){
+    return top + (rows.length ? '<div class="scroll"><table class="panel"><thead><tr><th>When</th><th>Name</th><th>Company</th><th>Email</th><th>Phone</th><th>Fleet</th><th>Message</th><th>Done</th></tr></thead><tbody>' + rows.filter(matches).map(function(l){
+      return '<tr><td class="mono">' + when(l.created_at) + '</td><td>' + esc(l.name) + '</td><td>' + esc(l.company || "") + '</td><td><a href="mailto:' + esc(l.email) + '">' + esc(l.email) + '</a></td><td>' + esc(l.phone || "") + '</td><td>' + esc(l.fleet_size || "") + '</td><td>' + esc(l.message || "") + '</td><td><input type="checkbox" data-lead="' + esc(l.id) + '"' + (l.handled ? " checked" : "") + '></td></tr>'; }).join("") + '</tbody></table></div>' : emptyCard("No demo requests yet. They arrive from the Book a demo form on the website."));
+  });
+  return q(sb.rpc("platform_orgs")).then(function(orgs){
+    var rows = orgs.filter(matches);
+    var by = function(st){ return orgs.filter(function(o){ return o.status === st; }).length; };
+    return top + '<div class="kpis">' + kpi("Organisations", num(orgs.length), "All time") + kpi("On trial", num(by("trial")), "14-day trials") + kpi("Paying", num(orgs.filter(function(o){ return o.stripe_linked && o.status === "active"; }).length), "Active Stripe subscriptions", "") +
+      kpi("Vehicles on platform", num(orgs.reduce(function(t, o){ return t + (o.vehicles || 0); }, 0)), "Excluding sold") + '</div>' +
+      '<div class="scroll"><table class="panel"><thead><tr><th>Organisation</th><th>Plan</th><th>Status</th><th>Trial ends</th><th class="right">Vehicles</th><th class="right">Members</th><th>Admins</th><th>Created</th><th></th></tr></thead><tbody>' + rows.map(function(o){
+        return '<tr><td><strong>' + esc(o.name) + '</strong><br><span class="note mono">' + esc(o.slug) + '</span></td><td>' + esc(o.plan) + (o.stripe_linked ? " " + pill("Stripe","ok") : "") + '</td><td>' + pill(o.status, statusTone(o.status === "trial" ? "watch" : o.status)) + '</td><td>' + (o.trial_ends_at ? when(o.trial_ends_at) : "—") + '</td>' +
+          '<td class="right">' + num(o.vehicles) + (o.vehicle_limit != null ? " / " + num(o.vehicle_limit) : "") + '</td><td class="right">' + num(o.members) + '</td><td class="mono" style="font-size:.8rem">' + esc(o.admins || "") + '</td><td class="mono">' + when(o.created_at) + '</td>' +
+          '<td><div class="row-actions"><button class="btn tiny" type="button" data-extend="' + o.id + '">+14 days</button><button class="btn tiny" type="button" data-edit-org="' + o.id + '">Edit</button></div></td></tr>'; }).join("") + '</tbody></table></div>' +
+      '<p class="note">Plan and status normally change automatically from Stripe. Use Edit for pilots, extensions or manual invoicing.</p>';
+  }).then(function(html){ state._platformOrgs = null; return html; });
+};
+BINDERS.platform = function(root){
+  Array.prototype.forEach.call(root.querySelectorAll("[data-platform-tab]"), function(b){ b.onclick = function(){ state.platformTab = b.dataset.platformTab; renderMain(); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-lead]"), function(c){ c.onchange = function(){ sb.rpc("platform_mark_lead", { p_id:c.dataset.lead, p_handled:c.checked }).then(function(res){ if (res.error) { c.checked = !c.checked; return fail(res.error); } toast("Saved"); }); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-extend]"), function(b){ b.onclick = function(){
+    var until = new Date(Date.now() + 14 * 86400000).toISOString();
+    sb.rpc("platform_update_org", { p_org:b.dataset.extend, p_status:"trial", p_trial_ends_at:until }).then(function(res){ if (res.error) return fail(res.error); toast("Trial extended by 14 days"); renderMain(); }); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-edit-org]"), function(b){ b.onclick = function(){
+    q(sb.rpc("platform_orgs")).then(function(orgs){ var o = orgs.filter(function(x){ return x.id === b.dataset.editOrg; })[0]; if (!o) return;
+      openModal('<h2>Edit ' + esc(o.name) + '</h2><form id="orgEdit"><div class="form-grid">' + field("Plan","plan",o.plan,{options:[["trial","Trial"],["starter","Starter"],["professional","Professional"],["enterprise","Enterprise"]]}) +
+        field("Status","status",o.status,{options:[["trial","Trial"],["active","Active"],["past_due","Past due"],["cancelled","Cancelled"]]}) +
+        field("Vehicle limit (blank = no limit)","vehicle_limit",o.vehicle_limit,{kind:"int"}) + field("Trial ends","trial_ends",o.trial_ends_at ? String(o.trial_ends_at).slice(0,10) : "",{type:"date"}) +
+        '</div><div class="actions"><button class="btn primary inline" type="submit">Save</button><button class="btn inline" type="button" data-close>Cancel</button></div></form>', function(m){
+        m.querySelector("#orgEdit").onsubmit = function(e){ e.preventDefault(); var v = formValues(e.target);
+          sb.rpc("platform_update_org", { p_org:o.id, p_plan:v.plan, p_status:v.status, p_trial_ends_at:v.trial_ends ? v.trial_ends + "T23:59:00Z" : null,
+            p_vehicle_limit:v.vehicle_limit, p_clear_limit:v.vehicle_limit == null }).then(function(res){ if (res.error) return fail(res.error); closeModal(); toast("Organisation updated"); renderMain(); }); };
+      }); }).catch(fail); }; });
 };
 
 // ------------------------------------------------------------------ CSV import
@@ -860,7 +1310,7 @@ function coerceRows(kind, grid){
     if (bad.length) errors.push("Row " + (idx + 2) + ": check " + bad.join(", ")); else out.push(o);
   });
   // de-duplicate on the conflict key (last row wins) so one upsert batch never hits the same key twice
-  var keys = def.conflict.split(","), seen = {}, dedup = [];
+  var keys = (def.match || def.conflict).split(","), seen = {}, dedup = [];
   out.forEach(function(o){ seen[keys.map(function(k){ return String(o[k]).toLowerCase(); }).join("|")] = o; });
   Object.keys(seen).forEach(function(k){ dedup.push(seen[k]); });
   return { rows:dedup, errors:errors, ignored:ignored };
@@ -921,6 +1371,7 @@ function bindGlobal(){
   $("menuBtn").onclick = function(){ document.body.classList.toggle("nav-open"); };
   $("overlay").onclick = function(){ document.body.classList.remove("nav-open"); };
   $("signOutBtn").onclick = signOut;
+  $("bellBtn").onclick = openAlerts;
   var st = null;
   $("search").addEventListener("input", function(e){ clearTimeout(st); st = setTimeout(function(){ state.search = e.target.value; renderMain(); }, 250); });
   var tick = function(){ try { $("clock").textContent = new Date().toLocaleString("en-GB", { weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit", timeZone:"Europe/London" }) + " · UK"; } catch (err) {} };
@@ -938,6 +1389,11 @@ function boot(){
   } catch (err) { return showNotConnected("The connection settings look invalid: " + friendlyError(err)); }
   bindGlobal();
   if (/type=recovery/.test(location.hash)) state.recovery = true;
+  var im = /[?&]invite=([A-Za-z0-9]+)/.exec(location.search);
+  state.invite = im ? im[1] : storedInvite();
+  if (state.invite) { storeInvite(state.invite); state.authTab = "invite";
+    sb.rpc("invite_preview", { p_token:state.invite }).then(function(r){ state.invitePreview = (r.data && r.data[0]) || null; if ($("login").className !== "hidden" && !document.body.classList.contains("app-on")) renderAuth(); }); }
+  else if (/[?&]start=trial/.test(location.search)) state.authTab = "trial";
   sb.auth.onAuthStateChange(function(event, session){
     if (event === "PASSWORD_RECOVERY") { state.recovery = true; state.session = session; return showLogin(); }
     if (event === "SIGNED_OUT") return afterSession(null);
