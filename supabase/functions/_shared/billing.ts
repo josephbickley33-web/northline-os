@@ -10,6 +10,7 @@
 //   STRIPE_PRICE_ONBOARDING      price_... one-off onboarding fee (optional)
 //   NORTHLINE_MIN_MONTHLY_PENCE  minimum monthly charge in pence, default 14900 (£149)
 //   NORTHLINE_APP_URL            where Checkout returns to, default the GitHub Pages app URL
+//   STRIPE_PORTAL_CONFIGURATION  bpc_... customer portal configuration made by stripe-setup.sh (optional)
 //   STRIPE_AUTOMATIC_TAX         "true" to let Stripe Tax add UK VAT (needs Stripe Tax set up)
 // Provided automatically by Supabase: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
 
@@ -30,6 +31,15 @@ export const cors: Record<string, string> = {
 };
 export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+// True while the Stripe key is a test-mode key: the app then shows "Test mode: no real money".
+export const testMode = (): boolean => env("STRIPE_SECRET_KEY").startsWith("sk_test_") || env("STRIPE_SECRET_KEY").startsWith("rk_test_");
+
+// The £149 (default) monthly minimum is enforced as a minimum number of billed vehicles for the plan's unit price.
+export const minQuantity = (unitPence: number): number => {
+  const minPence = Number(env("NORTHLINE_MIN_MONTHLY_PENCE", "14900")) || 0;
+  return Math.max(1, unitPence > 0 ? Math.ceil(minPence / unitPence) : 1);
+};
 
 export function billingConfigured(): { ok: boolean; missing: string[] } {
   const missing = ["STRIPE_SECRET_KEY", "STRIPE_PRICE_STARTER", "STRIPE_PRICE_PROFESSIONAL", "STRIPE_PRICE_ENTERPRISE"]

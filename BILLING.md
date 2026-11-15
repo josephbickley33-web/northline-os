@@ -3,60 +3,63 @@
 Until the Stripe secrets below are set, the Billing page says **"Billing not connected yet"** and free trials keep
 working normally. Nothing else changes. No Stripe account has been created – the owner must create it.
 
-## Placeholder prices (ex VAT – confirm before launch)
+## Set up / re-sync (one command)
 
-| Plan | Per vehicle / month | Includes |
-|---|---|---|
-| Starter | £19 | Fleet, MOT/service, stock, staff board, info pages, driver checks/defects/POD |
-| Professional | £29 | + AI forecasting, approval queue, alerts |
-| Enterprise | £39 | + integrations, custom domain/branding, priority support |
+```bash
+STRIPE_SECRET_KEY=sk_test_... SUPABASE_ACCESS_TOKEN=sbp_... ./stripe-setup.sh
+```
 
-Monthly minimum £149 (enforced by billing at least `ceil(14900 / unit price)` vehicles). Optional one-off onboarding fee.
+It creates or updates, idempotently, in the Stripe account the key belongs to:
 
-## What to create in Stripe (Dashboard › Product catalogue)
-
-1. Product **Northline Starter** → price **£19.00 GBP, recurring, monthly, per unit**. Copy the price ID (`price_…`).
-2. Product **Northline Professional** → **£29.00**, recurring monthly, per unit. Copy price ID.
-3. Product **Northline Enterprise** → **£39.00**, recurring monthly, per unit. Copy price ID.
-4. (Optional) Product **Northline onboarding** → one-off price, e.g. £499. Copy price ID.
-5. Settings › Billing › **Customer portal** → *Activate* (lets customers update cards, cancel, download invoices).
-6. Developers › **Webhooks** › Add endpoint:
-   * URL: `https://fgvleepcryfqyrsabfgh.supabase.co/functions/v1/stripe-webhook`
-   * Events: `checkout.session.completed`, `customer.subscription.created`,
-     `customer.subscription.updated`, `customer.subscription.deleted`
-   * Copy the **Signing secret** (`whsec_…`).
-7. Developers › **API keys** → copy the **Secret key** (`sk_live_…`, or `sk_test_…` to try it first).
-8. (Optional) Turn on Stripe Tax for UK VAT, then set `STRIPE_AUTOMATIC_TAX=true`.
-
-## Secrets to set in Supabase
-
-| Name | Value |
+| Object | Details |
 |---|---|
-| `STRIPE_SECRET_KEY` | `sk_live_…` / `sk_test_…` |
-| `STRIPE_WEBHOOK_SECRET` | `whsec_…` |
-| `STRIPE_PRICE_STARTER` | `price_…` (£19) |
-| `STRIPE_PRICE_PROFESSIONAL` | `price_…` (£29) |
-| `STRIPE_PRICE_ENTERPRISE` | `price_…` (£39) |
-| `STRIPE_PRICE_ONBOARDING` | optional `price_…` |
-| `NORTHLINE_MIN_MONTHLY_PENCE` | optional, default `14900` |
-| `STRIPE_AUTOMATIC_TAX` | optional `true` |
-| `NORTHLINE_APP_URL` | already set to the app URL |
+| Products | `northline_starter`, `northline_professional`, `northline_enterprise` ("Northline Starter/Professional/Enterprise"), `northline_onboarding` |
+| Prices (GBP, tax exclusive) | lookup keys `northline_starter` £19, `northline_professional` £29, `northline_enterprise` £39: monthly, per vehicle. `northline_onboarding` £495 one-off |
+| Customer portal | its own configuration (metadata `northline=1`): cancel at period end, change plan, change number of vehicles, update card, invoice history, billing details |
+| Webhook | `https://fgvleepcryfqyrsabfgh.supabase.co/functions/v1/stripe-webhook` for `checkout.session.completed` and `customer.subscription.created`, `.updated` and `.deleted`. Re-created on each run, because Stripe only shows the signing secret once |
 
-Command line: `npx supabase secrets set --project-ref fgvleepcryfqyrsabfgh STRIPE_SECRET_KEY=sk_… STRIPE_WEBHOOK_SECRET=whsec_… …`
+It then sets these Supabase Edge Function secrets through the Management API and redeploys the functions:
+`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PROFESSIONAL`, `STRIPE_PRICE_ENTERPRISE`,
+`STRIPE_PRICE_ONBOARDING`, `STRIPE_PORTAL_CONFIGURATION`, `NORTHLINE_MIN_MONTHLY_PENCE` and `NORTHLINE_APP_URL`. It never prints a secret or writes one to a file.
 
-### On an iPhone (no computer needed)
+One product per plan is needed because Stripe's customer portal can only switch between, or change the quantity of,
+products that each have a single monthly price.
 
-1. Safari → **dashboard.stripe.com** → sign up / sign in → complete business details (needed before live payments).
-2. Do steps 1–7 above (tap ☰ menu for Product catalogue, Settings, Developers). Long-press each ID to copy it into Notes.
-3. Safari → **supabase.com/dashboard** → project **northline** → **Edge Functions** → **Secrets** (Manage secrets) →
-   add each name/value from the table → Save.
-4. Open the app → Admin › Billing → it should now show "Choose plan" buttons that open Stripe checkout.
-   Use test keys first with card `4242 4242 4242 4242`, any future date, any CVC.
+## Monthly minimum (£149)
+
+This is enforced as a **minimum number of billed vehicles**: `ceil(£149 / unit price)`.
+
+| Plan | Minimum vehicles | Minimum monthly charge |
+|---|---|---|
+| Starter | 8 | £152 |
+| Professional | 6 | £174 |
+| Enterprise | 4 | £156 |
+
+* Checkout bills `max(vehicles in use, minimum)`.
+* If a customer lowers the quantity below the minimum in the portal, the webhook sets it back to the minimum, with no proration.
+* The real minimum is therefore £3 to £25 above £149. To make it exactly £149, switch each plan to a Stripe *volume-tiered* price
+  (tier 1: up to N vehicles with a flat £149 and £0 per unit; tier 2: per unit at the plan price). That is not done yet.
+
+## Test mode
+
+While the key starts with `sk_test_`, the app's billing page shows **"Test mode: no real money"**.
+Test card: 4242 4242 4242 4242, any future date, any CVC.
+
+## Going live
+
+1. In Stripe, finish account activation (business details and bank account), then turn on live mode.
+2. Developers › API keys (live) › copy the **Secret key** (`sk_live_…`). A restricted key also works if it has write access to
+   Products, Prices, Customers, Checkout Sessions, Subscriptions, Customer portal and Webhook endpoints.
+3. Run `STRIPE_SECRET_KEY=sk_live_... SUPABASE_ACCESS_TOKEN=sbp_... ./stripe-setup.sh`. This creates the live objects and switches
+   Supabase to them. The test-mode banner goes away by itself.
+4. Optional: turn on Stripe Tax for UK VAT, then add the Supabase secret `STRIPE_AUTOMATIC_TAX=true`.
+5. Optional: Settings › Business › public details: set the business name customers see. The test account currently shows
+   "Northline logistics syatem", which is a typo.
 
 ## How it works
 
-* `billing-checkout` (signed-in org admin): creates/reuses the Stripe customer, quantity = max(1, vehicles in use,
-  minimum-spend quantity), adds the onboarding line once, returns the Checkout URL.
-* `billing-portal` (org admin): opens the Stripe customer portal.
-* `stripe-webhook` (no JWT, verified by `whsec_` signature): sets the organisation's plan, status, vehicle limit and
-  Stripe IDs. Returns 503 until the secrets exist.
+* `billing-checkout` (signed-in org admin): creates or reuses the Stripe customer, sets quantity = max(vehicles in use, minimum),
+  adds the onboarding line once, and returns the Checkout URL. `{action:"status"}` returns configured, prices and test_mode.
+* `billing-portal` (org admin): opens the Stripe customer portal with the Northline configuration.
+* `stripe-webhook` (no JWT, verified by the `whsec_` signature): sets the organisation's plan, status, vehicle limit and Stripe IDs,
+  and puts the monthly minimum back if needed. It returns 503 until the secrets exist.

@@ -1,7 +1,7 @@
 // POST { action: "status" }                      -> { configured, missing, prices }
 // POST { plan: "starter"|"professional"|"enterprise" } -> { url } Stripe Checkout for a per-vehicle subscription
 // Without STRIPE_SECRET_KEY and price ids it answers { configured: false } and the trial carries on.
-import { appUrl, billingConfigured, env, handle, HttpError, json, PLANS, Plan, priceIdFor, requireOrgAdmin, stripe, updateOrg, vehiclesInUse } from "../_shared/billing.ts";
+import { appUrl, billingConfigured, env, handle, minQuantity, testMode, HttpError, json, PLANS, Plan, priceIdFor, requireOrgAdmin, stripe, updateOrg, vehiclesInUse } from "../_shared/billing.ts";
 
 export const handler = handle(async (req) => {
   const body = await req.json().catch(() => ({}));
@@ -14,7 +14,7 @@ export const handler = handle(async (req) => {
       for (const p of PLANS) prices[p] = (await stripe("GET", "prices/" + priceIdFor(p))).unit_amount ?? null;
     }
     return json({ configured: cfg.ok, missing: cfg.missing, prices, message: cfg.ok ? "Billing connected" : "Billing not connected yet",
-      subscription: !!org.stripe_subscription_id });
+      subscription: !!org.stripe_subscription_id, test_mode: cfg.ok && testMode() });
   }
 
   const plan = String(body.plan ?? "") as Plan;
@@ -25,10 +25,9 @@ export const handler = handle(async (req) => {
 
   const price = await stripe("GET", "prices/" + priceIdFor(plan));
   const unit = Number(price.unit_amount) || 1;
-  const minPence = Number(env("NORTHLINE_MIN_MONTHLY_PENCE", "14900")) || 0;
   const vehicles = await vehiclesInUse(org.id);
   // Billed per vehicle, with a minimum monthly charge expressed as a minimum number of vehicles.
-  const quantity = Math.max(1, vehicles, Math.ceil(minPence / unit));
+  const quantity = Math.max(vehicles, minQuantity(unit));
 
   let customer = org.stripe_customer_id;
   if (!customer) {

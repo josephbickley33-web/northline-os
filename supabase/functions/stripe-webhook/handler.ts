@@ -1,7 +1,7 @@
 // Stripe -> Northline. Deployed with --no-verify-jwt (Stripe does not send a Supabase JWT);
 // every request is authenticated with the Stripe-Signature header instead.
 // Events: checkout.session.completed, customer.subscription.created|updated|deleted
-import { env, json, planForPrice, rest, stripe, updateOrg } from "../_shared/billing.ts";
+import { env, json, minQuantity, planForPrice, rest, stripe, updateOrg } from "../_shared/billing.ts";
 
 const enc = new TextEncoder();
 async function verify(payload: string, header: string, secret: string, toleranceSec = 300): Promise<boolean> {
@@ -36,7 +36,17 @@ async function syncSubscription(sub: any) {
   // deno-lint-ignore no-explicit-any
   const items: any[] = sub.items?.data ?? [];
   let plan: string | null = null, quantity: number | null = null;
-  for (const it of items) { const p = planForPrice(it.price?.id); if (p) { plan = p; quantity = it.quantity ?? null; } }
+  for (const it of items) {
+    const p = planForPrice(it.price?.id);
+    if (!p) continue;
+    plan = p; quantity = it.quantity ?? null;
+    // Monthly minimum: if the quantity was lowered (e.g. in the customer portal) below the minimum, put it back.
+    const min = minQuantity(Number(it.price?.unit_amount) || 0);
+    if (quantity != null && quantity < min && sub.status !== "canceled" && it.id) {
+      await stripe("POST", "subscription_items/" + it.id, { quantity: min, proration_behavior: "none" });
+      quantity = min;
+    }
+  }
   const status = STATUS[sub.status] ?? null;
   const patch: Record<string, unknown> = { stripe_subscription_id: sub.id, stripe_customer_id: sub.customer };
   if (status) patch.status = status;
