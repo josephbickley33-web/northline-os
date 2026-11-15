@@ -36,7 +36,7 @@ async function signIn(p, email, pass){ await fill(p, 'input[name=email]', email)
   // 1. Sales website (desktop + iPhone)
   const site = await newPage(browser, false, BASE);
   let t = await text(site);
-  ok(t.includes('Start your 14-day free trial') && t.includes('Book a demo') && t.includes('Indicative prices'), 'sales site renders hero, CTAs and labelled pricing');
+  ok(t.includes('Start your 14-day free trial') && t.includes('Book a demo') && t.includes('£15') && t.includes('half price for the first 90 days'), 'sales site renders hero, CTAs, pricing and pilot offer');
   for (const id of ['problem','features','ai','security','pricing','faq','demo']) ok(!!(await site.$('#' + id)), 'sales site section: ' + id);
   await site.screenshot({ path:'/tmp/e2e-site-desktop.png' });
   await site.screenshot({ path:'/tmp/e2e-site-desktop-full.png', fullPage:true });
