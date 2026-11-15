@@ -106,7 +106,7 @@ async function signIn(p, email, pass){ await fill(p, 'input[name=email]', email)
   ok((await boss.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())) === '#1d4ed8', 'branding: colour applied');
   // billing
   await adminTab(boss, 'billing'); t = await mainText(boss);
-  ok(/trial days left/i.test(t) && t.includes('14') && t.includes('Billing not connected yet') && t.includes('£29'), 'billing page: trial days left, not connected, plans');
+  ok(/trial days left/i.test(t) && t.includes('14') && t.includes('Billing not connected yet') && t.includes('£15'), 'billing page: trial days left, not connected, plans');
   await boss.screenshot({ path:'/tmp/e2e-billing-iphone.png', fullPage:true });
   await boss.click('[data-plan="starter"]'); await sleep(1500);
   ok((await boss.$eval('#billingMsg', e => e.innerText)).includes('Billing not connected yet'), 'choosing a plan without Stripe keeps trial and says not connected');

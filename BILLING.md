@@ -16,7 +16,7 @@ It creates or updates, idempotently, in the Stripe account the key belongs to:
 | Object | Details |
 |---|---|
 | Products | `northline_starter`, `northline_professional`, `northline_enterprise` ("Northline Starter/Professional/Enterprise"), `northline_onboarding` |
-| Prices (GBP, tax exclusive) | lookup keys `northline_starter` £19, `northline_professional` £29, `northline_enterprise` £39: monthly, per vehicle. `northline_onboarding` £495 one-off |
+| Prices (GBP, tax exclusive) | lookup keys `northline_starter` £9, `northline_professional` £15, `northline_enterprise` £25: monthly, per vehicle. `northline_onboarding` £495 one-off ("from £495"; quote larger jobs separately) |
 | Customer portal | its own configuration (metadata `northline=1`): cancel at period end, change plan, change number of vehicles, update card, invoice history, billing details |
 | Webhook | `https://fgvleepcryfqyrsabfgh.supabase.co/functions/v1/stripe-webhook` for `checkout.session.completed` and `customer.subscription.created`, `.updated` and `.deleted`. Re-created on each run, because Stripe only shows the signing secret once |
 
@@ -27,20 +27,31 @@ It then sets these Supabase Edge Function secrets through the Management API and
 One product per plan is needed because Stripe's customer portal can only switch between, or change the quantity of,
 products that each have a single monthly price.
 
+## Pilot offer: half price for 90 days
+
+| Object | Details |
+|---|---|
+| Coupon `northline_pilot_50` | 50% off the plan line, repeating for 3 monthly invoices (90 days). The onboarding fee is not discounted |
+| Promotion code `PILOT50` | The customer enters it on the Stripe Checkout page ("Add promotion code") |
+
+To give a pilot customer the discount after they have subscribed, open the subscription in the Stripe dashboard and choose Add coupon › `northline_pilot_50`.
+
 ## Monthly minimum (£149)
 
 This is enforced as a **minimum number of billed vehicles**: `ceil(£149 / unit price)`.
 
-| Plan | Minimum vehicles | Minimum monthly charge |
-|---|---|---|
-| Starter | 8 | £152 |
-| Professional | 6 | £174 |
-| Enterprise | 4 | £156 |
+| Plan | Price | Minimum vehicles | Minimum monthly charge |
+|---|---|---|---|
+| Starter | £9 | 17 | £153 |
+| Professional | £15 | 10 | £150 |
+| Enterprise | £25 | 6 | £150 |
 
-* Checkout bills `max(vehicles in use, minimum)`.
-* If a customer lowers the quantity below the minimum in the portal, the webhook sets it back to the minimum, with no proration.
-* The real minimum is therefore £3 to £25 above £149. To make it exactly £149, switch each plan to a Stripe *volume-tiered* price
-  (tier 1: up to N vehicles with a flat £149 and £0 per unit; tier 2: per unit at the plan price). That is not done yet.
+* Checkout bills `max(vehicles in use, minimum)`, and the customer's vehicle limit equals the billed quantity, so the extra £1 to £4 buys real vehicle slots.
+* If a customer lowers the quantity below the minimum in the portal, the webhook sets it back, with no proration.
+* Why not exactly £149: that needs Stripe volume-tiered prices (a flat £149 up to N−1 vehicles, then per vehicle). Tiered prices have no single
+  unit price, so checkout, the portal's quantity control, the billing page and the webhook's minimum logic would all need special handling,
+  and Checkout would show a confusing "flat fee" line. With these prices the difference is at most £4 a month, so the simpler,
+  already-tested approach was kept.
 
 ## Test mode
 

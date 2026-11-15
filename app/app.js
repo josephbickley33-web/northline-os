@@ -1017,9 +1017,9 @@ function bindCompany(root){
 // ------------------------------------------------------------------ billing (Admin › Billing)
 // Placeholder prices for the owner to confirm. GBP, excluding VAT. Stripe holds the real prices.
 var PLAN_INFO = [
-  { id:"starter", name:"Starter", price:19, features:["Fleet, MOT and service tracking","Stock and movements","Staff board and information pages","Driver walkaround checks, defects and proof of delivery"] },
-  { id:"professional", name:"Professional", price:29, features:["Everything in Starter","AI forecasting with conformal intervals","Approval queue with named approvers and audit trail","Notifications for MOT, stock, late jobs and approvals"] },
-  { id:"enterprise", name:"Enterprise", price:39, features:["Everything in Professional","Integrations (telematics, tachograph, WMS, accounts)","Custom domain and branding","Priority support"] }
+  { id:"starter", name:"Starter", price:9, features:["Fleet, MOT and service tracking","Stock and movements","Staff board and information pages","Driver walkaround checks, defects and proof of delivery"] },
+  { id:"professional", name:"Professional", price:15, features:["Everything in Starter","AI forecasting with conformal intervals","Approval queue with named approvers and audit trail","Notifications for MOT, stock, late jobs and approvals"] },
+  { id:"enterprise", name:"Enterprise", price:25, features:["Everything in Professional","Integrations (telematics, tachograph, WMS, accounts)","Custom domain and branding","Priority support"] }
 ];
 function invokeFn(name, body){
   return sb.functions.invoke(name, { body:body || {} }).then(function(res){
@@ -1042,7 +1042,7 @@ function billingTab(top){
       kpi("Vehicles", num(o.vehicles_used) + " / " + limit, "Sold vehicles do not count", o.vehicle_limit != null && o.vehicles_used >= o.vehicle_limit ? "warn" : "") + kpi("Active members", num(o.members), "Unlimited users on every plan") + '</div>' +
       (connected && st.data.test_mode ? '<div class="alert warn test-mode" id="billingTestMode" role="status"><strong>Test mode: no real money.</strong> Payments go through Stripe\'s test system. Use card 4242 4242 4242 4242, any future date and any CVC. Nothing is charged.</div>' : "") +
       (connected ? "" : '<div class="alert info" id="billingNotConnected"><strong>Billing not connected yet.</strong> Your free trial keeps working. Card payments switch on once the Stripe account is linked.</div>') +
-      '<section><h2>Plans</h2><p class="intro">Per vehicle, per month, in pounds, excluding VAT. Minimum monthly charge: at least 8 vehicles on Starter (£152), 6 on Professional (£174) or 4 on Enterprise (£156). Plus a one-off £495 onboarding fee to import your data.</p><div class="plan-grid">' +
+      '<section><h2>Plans</h2><p class="intro">Per vehicle, per month, in pounds, excluding VAT. Minimum monthly charge of about £149: at least 17 vehicles on Starter (£153), 10 on Professional (£150) or 6 on Enterprise (£150). Onboarding from £495, one-off. Pilot customers: enter code PILOT50 at checkout for half price on the plan for the first 90 days.</p><div class="plan-grid">' +
       PLAN_INFO.map(function(p){ var current = o.plan === p.id && o.status !== "trial";
         return '<div class="card plan-card' + (p.id === "professional" ? " featured" : "") + '"><h3>' + p.name + (current ? " " + pill("Current","ok") : "") + '</h3><div class="plan-price">£' + p.price + '<small> / vehicle / month</small></div><ul>' +
           p.features.map(function(f){ return "<li>" + esc(f) + "</li>"; }).join("") + '</ul><button class="btn ' + (p.id === "professional" ? "primary" : "") + '" type="button" data-plan="' + p.id + '"' + (current ? " disabled" : "") + '>' + (current ? "Your plan" : "Choose " + p.name) + '</button></div>'; }).join("") +

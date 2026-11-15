@@ -10,10 +10,12 @@
 #
 # What it does (idempotently):
 #   1. Products "Northline Starter|Professional|Enterprise" (ids northline_<plan>), each with one monthly
-#      per-vehicle GBP price, tax exclusive (lookup keys northline_starter £19, northline_professional £29,
-#      northline_enterprise £39). One product per plan because the customer portal needs that to switch plans.
+#      per-vehicle GBP price, tax exclusive (lookup keys northline_starter £9, northline_professional £15,
+#      northline_enterprise £25). One product per plan because the customer portal needs that to switch plans.
 #      Product "Northline onboarding" (id northline_onboarding) with one-off price northline_onboarding £495.
 #      If an amount changes here, a new price is created and the lookup key moves to it (old price archived).
+#      Pilot offer: coupon northline_pilot_50 (50% off the plan, 3 monthly invoices = 90 days, not the onboarding fee)
+#      and promotion code PILOT50 for Checkout.
 #   2. Customer portal configuration (cancel at period end, change plan/quantity, payment method, invoices).
 #   3. Webhook endpoint -> stripe-webhook function. Re-created on every run because Stripe only reveals the
 #      signing secret at creation; the secret goes straight into Supabase and is never printed or saved.
@@ -42,7 +44,7 @@ REF = os.environ["SUPABASE_PROJECT_REF"]; APP = os.environ["APP_URL"]
 if not KEY.startswith(("sk_test_", "sk_live_", "rk_test_", "rk_live_")): sys.exit("STRIPE_SECRET_KEY does not look like a Stripe secret key")
 MODE = "TEST" if "_test_" in KEY else "LIVE"
 P = lambda k, d: int(os.environ.get(k, d))
-PRICES = {"starter": P("PRICE_STARTER_PENCE", 1900), "professional": P("PRICE_PROFESSIONAL_PENCE", 2900), "enterprise": P("PRICE_ENTERPRISE_PENCE", 3900)}
+PRICES = {"starter": P("PRICE_STARTER_PENCE", 900), "professional": P("PRICE_PROFESSIONAL_PENCE", 1500), "enterprise": P("PRICE_ENTERPRISE_PENCE", 2500)}
 ONBOARD = P("PRICE_ONBOARDING_PENCE", 49500); MINP = P("MIN_MONTHLY_PENCE", 14900)
 HOOK = f"https://{REF}.supabase.co/functions/v1/stripe-webhook"
 EVENTS = ["checkout.session.completed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"]
@@ -110,6 +112,23 @@ ids["onboarding"], how = price("northline_onboarding", onb_prod, ONBOARD, False)
 print(f"  price northline_onboarding    £{ONBOARD/100:.2f} one-off        {ids['onboarding']} ({how})")
 for plan, amount in PRICES.items():
     q = max(1, -(-MINP // amount)); print(f"  minimum {plan}: {q} vehicles = £{q*amount/100:.2f}/month")
+
+# Pilot: half price on the plan for the first 3 monthly invoices (90 days). Onboarding is not discounted.
+PILOT = {"percent_off": 50, "duration": "repeating", "duration_in_months": 3, "currency": None}
+c = stripe("GET", "coupons/northline_pilot_50", {"expand": ["applies_to"]})
+want_products = sorted(prods.values())
+if c and (c.get("percent_off") != 50 or c.get("duration_in_months") != 3 or sorted((c.get("applies_to") or {}).get("products", [])) != want_products):
+    stripe("DELETE", "coupons/northline_pilot_50"); c = None   # coupons are immutable; existing customers keep their discount
+if c is None:
+    c = stripe("POST", "coupons", {"id": "northline_pilot_50", "name": "Northline pilot: half price for 90 days", "percent_off": 50,
+                                    "duration": "repeating", "duration_in_months": 3, "applies_to": {"products": want_products},
+                                    "metadata": {"northline": "1"}})
+codes = stripe("GET", "promotion_codes", {"code": "PILOT50", "limit": 10})["data"]
+live = [x for x in codes if x["active"] and x["coupon"]["id"] == c["id"] and x["coupon"].get("valid", True)]
+for x in codes:
+    if x["active"] and x not in live: stripe("POST", f"promotion_codes/{x['id']}", {"active": False})
+promo = live[0] if live else stripe("POST", "promotion_codes", {"coupon": c["id"], "code": "PILOT50", "metadata": {"northline": "1"}})
+print(f"  pilot coupon {c['id']} (50% off plan for 3 months), promotion code PILOT50 {promo['id']} ({'kept' if live else 'created'})")
 
 portal = {
     "business_profile": {"headline": "Northline: manage plan, vehicles, card and invoices"},
