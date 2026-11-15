@@ -1,0 +1,12 @@
+# Minimal Supabase CLI config, used only to deploy the Edge Functions.
+project_id = "northline"
+
+[functions.billing-checkout]
+verify_jwt = true
+
+[functions.billing-portal]
+verify_jwt = true
+
+[functions.stripe-webhook]
+# Stripe cannot send a Supabase JWT; the function verifies the Stripe-Signature header instead.
+verify_jwt = false
