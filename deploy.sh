@@ -99,9 +99,9 @@ if [[ "${SKIP_FUNCTIONS:-}" == "1" ]]; then
   echo "5/6 Skipping Edge Functions (SKIP_FUNCTIONS=1)"
 else
   echo "5/6 Deploying Edge Functions (billing-checkout, billing-portal, stripe-webhook)…"
-  ( cd "$DIR" && npx -y supabase@latest functions deploy billing-checkout billing-portal --project-ref "$REF" --use-api \
-    && npx -y supabase@latest functions deploy stripe-webhook --project-ref "$REF" --use-api --no-verify-jwt \
-    && npx -y supabase@latest secrets set --project-ref "$REF" "NORTHLINE_APP_URL=$SITE_URL" ) \
+  ( cd "$DIR" && npx -y supabase@latest functions deploy billing-checkout billing-portal --project-ref "$REF" --use-api --yes \
+    && npx -y supabase@latest functions deploy stripe-webhook --project-ref "$REF" --use-api --no-verify-jwt --yes \
+    && npx -y supabase@latest secrets set --project-ref "$REF" "NORTHLINE_APP_URL=$SITE_URL" --yes ) \
     || echo "    WARNING: function deploy failed; billing will show 'Billing not connected yet'. See BILLING.md." >&2
 fi
 
