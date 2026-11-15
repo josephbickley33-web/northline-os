@@ -908,6 +908,8 @@ VIEWS.admin = function(){
         Object.keys(CSV_DEFS).map(function(k){ var d = CSV_DEFS[k]; return '<div class="card"><h3>' + d.label + '</h3><div class="csv-help">' + Object.keys(d.cols).join(",") + '</div><p class="note">Required: ' + d.required.join(", ") + '. Matches existing rows on ' + d.match.replace(",", " + ") + '.</p><div class="actions"><button class="btn primary inline" type="button" data-csv="' + k + '">Import ' + d.label.toLowerCase() + '</button><button class="btn inline" type="button" data-template="' + k + '">Download template</button></div></div>'; }).join("") +
         '</div></section>' +
         '<section><h2>Example data</h2><p class="intro">The system started with made-up example rows (' + c[0] + ' jobs, ' + c[1] + ' vehicles still present). Remove them once your real data is in.</p><button class="btn danger inline" type="button" data-clear-example>Remove all example data</button></section>' +
+        '<section><h2>Export your data</h2><p class="intro">Download a CSV copy of your records at any time. Opens in Excel or Numbers.</p><div class="actions">' +
+          Object.keys(CSV_DEFS).map(function(k){ return '<button class="btn inline" type="button" data-export="' + k + '">Export ' + CSV_DEFS[k].label.toLowerCase() + '</button>'; }).join("") + '</div></section>' +
         '<section><h2>Board channels</h2><button class="btn inline" type="button" data-new-channel>Add a channel</button></section>';
     });
   }
@@ -934,6 +936,15 @@ BINDERS.admin = function(root){
   Array.prototype.forEach.call(root.querySelectorAll("[data-template]"), function(b){ b.onclick = function(){ var d = CSV_DEFS[b.dataset.template];
     var blob = new Blob([Object.keys(d.cols).join(",") + "\n"], { type:"text/csv" }), a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "northline-" + b.dataset.template + "-template.csv"; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-export]"), function(b){ b.onclick = function(){ var d = CSV_DEFS[b.dataset.export];
+    q(sb.from(d.table).select("*").limit(50000)).then(function(rows){
+      var cols = Object.keys(d.cols).concat(["example"]);
+      var cell = function(v){ v = v == null ? "" : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+      var csv = "\uFEFF" + cols.join(",") + "\n" + rows.map(function(r){ return cols.map(function(c){ return cell(r[c]); }).join(","); }).join("\n") + "\n";
+      var blob = new Blob([csv], { type:"text/csv;charset=utf-8" }), a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = "northline-" + b.dataset.export + "-" + new Date().toISOString().slice(0,10) + ".csv"; document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000); toast("Exported " + rows.length + " rows");
+    }).catch(fail); }; });
   var ce = root.querySelector("[data-clear-example]");
   if (ce) ce.onclick = function(){ if (!confirm("Remove every example row (jobs, vehicles, stock, hours, example posts and proposals)? Your own data is kept.")) return;
     sb.rpc("clear_example_data").then(function(res){ if (res.error) return fail(res.error); toast("Example data removed"); renderMain(); }); };
@@ -1221,7 +1232,7 @@ VIEWS.platform = function(){
   return q(sb.rpc("platform_orgs")).then(function(orgs){
     var rows = orgs.filter(matches);
     var by = function(st){ return orgs.filter(function(o){ return o.status === st; }).length; };
-    return top + '<div class="kpis">' + kpi("Organisations", num(orgs.length), "All time") + kpi("On trial", num(by("trial")), "14-day trials") + kpi("Paying", num(by("active")), "Active subscriptions", "") +
+    return top + '<div class="kpis">' + kpi("Organisations", num(orgs.length), "All time") + kpi("On trial", num(by("trial")), "14-day trials") + kpi("Paying", num(orgs.filter(function(o){ return o.stripe_linked && o.status === "active"; }).length), "Active Stripe subscriptions", "") +
       kpi("Vehicles on platform", num(orgs.reduce(function(t, o){ return t + (o.vehicles || 0); }, 0)), "Excluding sold") + '</div>' +
       '<div class="scroll"><table class="panel"><thead><tr><th>Organisation</th><th>Plan</th><th>Status</th><th>Trial ends</th><th class="right">Vehicles</th><th class="right">Members</th><th>Admins</th><th>Created</th><th></th></tr></thead><tbody>' + rows.map(function(o){
         return '<tr><td><strong>' + esc(o.name) + '</strong><br><span class="note mono">' + esc(o.slug) + '</span></td><td>' + esc(o.plan) + (o.stripe_linked ? " " + pill("Stripe","ok") : "") + '</td><td>' + pill(o.status, statusTone(o.status === "trial" ? "watch" : o.status)) + '</td><td>' + (o.trial_ends_at ? when(o.trial_ends_at) : "—") + '</td>' +

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data processing agreement · Northline</title><meta name="robots" content="noindex"><link rel="icon" href="../app/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="../assets/site.css"></head>
+<body><header class="nav"><div class="wrap"><a class="logo" href="../"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#083332" stroke-width="2"><path d="M3 17h18M5 17V8l7-4 7 4v9M9 17v-4h6v4"/></svg></span>Northline</a>
+<div class="nav-cta" style="margin-left:auto"><a class="btn btn-primary btn-sm" href="../app/?start=trial">Start free trial</a></div></div></header>
+<main class="legal"><h1>Data processing agreement</h1><p class="fine">Last updated: <span class="fill">[date]</span> · Version <span class="fill">[0.1 draft]</span></p>
+<div class="template-warning"><strong>Template: needs review by a qualified UK lawyer before use.</strong>This is a starting draft, not legal advice. Text in <span class="fill">[square brackets]</span> must be completed, and the whole document checked against your actual company, contracts, suppliers and data flows.</div>
+
+<p>This agreement ("DPA") forms part of the Terms of service between the Customer (controller) and <span class="fill">[Company legal name, e.g. Northline Ltd]</span> (processor), and meets Article 28 of the UK GDPR.</p>
+<h2>1. Details of processing (Annex 1)</h2>
+<table><tr><th>Subject matter</th><td>Providing the Northline service</td></tr>
+<tr><th>Duration</th><td>The term of the subscription plus the return/deletion period</td></tr>
+<tr><th>Nature and purpose</th><td>Hosting, storage, display, calculation of alerts and forecasts, transmission to the Customer's users</td></tr>
+<tr><th>Personal data</th><td>Staff and driver names, work emails, roles, depots; drivers' hours records; jobs assigned; walkaround checks, defect reports, photos; delivery receiver names and signatures; board messages; audit logs; <span class="fill">[other]</span></td></tr>
+<tr><th>Data subjects</th><td>Customer employees, agency drivers, contractors, customers' consignees</td></tr>
+<tr><th>Special category data</th><td>Not intended. <span class="fill">[The Customer must not upload health or criminal-offence data unless agreed in writing.]</span></td></tr></table>
+<h2>2. Processor obligations</h2><ul>
+<li>Process only on the Customer's documented instructions (these terms and the Customer's use of the service).</li>
+<li>Ensure people authorised to process the data are bound by confidentiality.</li>
+<li>Implement appropriate technical and organisational measures (Annex 2).</li>
+<li>Use sub-processors only as listed (Annex 3), with equivalent written terms, and give <span class="fill">[30]</span> days' notice of changes so the Customer can object.</li>
+<li>Assist with data subject requests, security, breach notification, DPIAs and prior consultation, taking into account the nature of processing.</li>
+<li>Notify the Customer without undue delay, and in any case within <span class="fill">[48]</span> hours, after becoming aware of a personal data breach.</li>
+<li>At the end of the service, delete or return the data at the Customer's choice within <span class="fill">[30]</span> days, unless law requires storage.</li>
+<li>Make available information needed to demonstrate compliance and allow audits <span class="fill">[on reasonable notice, at most once a year, at the cost of the Customer]</span>.</li></ul>
+<h2>3. International transfers</h2><p>Customer data is stored in the London region (eu-west-2). Any restricted transfer (for example, sub-processor support access) will be covered by <span class="fill">[the UK IDTA, UK Addendum or UK–US Data Bridge]</span>.</p>
+<h2>Annex 2: Security measures</h2><ul>
+<li>Encryption in transit (TLS) and at rest (hosting provider).</li>
+<li>Per-customer isolation enforced by database row-level security, covered by automated tests.</li>
+<li>Role-based access for Customer users; platform staff do not see operational records through the product.</li>
+<li>Append-only audit log of sign-ins, role changes, AI decisions and data changes.</li>
+<li>Private file storage for photos and signatures, segregated by customer.</li>
+<li><span class="fill">[Backups, restore testing, staff access, MFA for admin accounts, vulnerability management, incident response.]</span></li></ul>
+<h2>Annex 3: Sub-processors</h2>
+<table><tr><th>Sub-processor</th><th>Purpose</th><th>Location</th></tr>
+<tr><td>Supabase Inc. (Amazon Web Services)</td><td>Database, authentication, storage, functions</td><td>London (eu-west-2)</td></tr>
+<tr><td>Stripe</td><td>Billing (billing contacts only)</td><td><span class="fill">[UK/EU/US]</span></td></tr>
+<tr><td><span class="fill">[Email provider]</span></td><td><span class="fill">[Transactional email]</span></td><td><span class="fill">[location]</span></td></tr></table>
+<p style="margin-top:40px"><a href="privacy.html">Privacy policy</a> · <a href="terms.html">Terms of service</a> · <a href="dpa.html">Data processing agreement</a> · <a href="cookies.html">Cookie notice</a> · <a href="../">Home</a></p></main></body></html>
