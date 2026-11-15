@@ -372,9 +372,11 @@ declare
   meta jsonb := coalesce(new.raw_user_meta_data, '{}'::jsonb);
   fname text := coalesce(nullif(meta->>'full_name',''), split_part(coalesce(new.email,''),'@',1));
   inv public.org_invites;
-  oid uuid; r text := 'driver'; act boolean := false; ttl text := null; msg text;
+  oid uuid; r text := 'driver'; act boolean := false; ttl text := null; msg text; first_ever boolean;
 begin
   perform pg_advisory_xact_lock(hashtext('northline_bootstrap_admin'));
+  -- Brand-new installation: the very first account is the platform owner.
+  first_ever := not exists (select 1 from public.profiles) and not exists (select 1 from public.platform_admins);
   if coalesce(meta->>'invite','') <> '' then
     select * into inv from public.org_invites
      where token = meta->>'invite' and not revoked and accepted_at is null and expires_at > now()
@@ -389,11 +391,11 @@ begin
     oid := public.new_trial_org(meta->>'org_name', new.id, new.email);
     r := 'admin'; act := true; ttl := 'Founding administrator'; msg := 'Started a free trial';
   end if;
-  if oid is null and not exists (select 1 from public.profiles) and not exists (select 1 from public.platform_admins) then
+  if oid is null and first_ever then
     oid := '00000000-0000-4000-8000-000000000001'; r := 'admin'; act := true; ttl := 'Founding administrator';
     msg := 'First member bootstrapped as admin';
-    insert into public.platform_admins(user_id) values (new.id) on conflict do nothing;
   end if;
+  if first_ever then insert into public.platform_admins(user_id) values (new.id) on conflict do nothing; end if;
   insert into public.profiles(id, email, full_name, role, active, title, org_id)
   values (new.id, new.email, fname, r, act, ttl, oid)
   on conflict (id) do nothing;
