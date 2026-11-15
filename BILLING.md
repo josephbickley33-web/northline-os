@@ -6,8 +6,10 @@ working normally. Nothing else changes. No Stripe account has been created – t
 ## Set up / re-sync (one command)
 
 ```bash
-STRIPE_SECRET_KEY=sk_test_... SUPABASE_ACCESS_TOKEN=sbp_... ./stripe-setup.sh
+NORTHLINE_STRIPE_SECRET_KEY=sk_test_... SUPABASE_ACCESS_TOKEN=sbp_... EXPECT_STRIPE_ACCOUNT=acct_... ./stripe-setup.sh
 ```
+
+The script reads `NORTHLINE_STRIPE_SECRET_KEY` first and only falls back to `STRIPE_SECRET_KEY` if that is unset, so other projects on a shared machine that use `STRIPE_SECRET_KEY` can't clash. `EXPECT_STRIPE_ACCOUNT` (optional) makes it refuse any other Stripe account.
 
 It creates or updates, idempotently, in the Stripe account the key belongs to:
 
@@ -50,7 +52,7 @@ Test card: 4242 4242 4242 4242, any future date, any CVC.
 1. In Stripe, finish account activation (business details and bank account), then turn on live mode.
 2. Developers › API keys (live) › copy the **Secret key** (`sk_live_…`). A restricted key also works if it has write access to
    Products, Prices, Customers, Checkout Sessions, Subscriptions, Customer portal and Webhook endpoints.
-3. Run `STRIPE_SECRET_KEY=sk_live_... SUPABASE_ACCESS_TOKEN=sbp_... ./stripe-setup.sh`. This creates the live objects and switches
+3. Run `NORTHLINE_STRIPE_SECRET_KEY=sk_live_... SUPABASE_ACCESS_TOKEN=sbp_... EXPECT_STRIPE_ACCOUNT=acct_... ./stripe-setup.sh`. This creates the live objects and switches
    Supabase to them. The test-mode banner goes away by itself.
 4. Optional: turn on Stripe Tax for UK VAT, then add the Supabase secret `STRIPE_AUTOMATIC_TAX=true`.
 5. Optional: Settings › Business › public details: set the business name customers see. The test account currently shows

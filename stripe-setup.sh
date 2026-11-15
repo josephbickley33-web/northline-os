@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Northline: set up (or re-sync) Stripe billing and connect it to Supabase. Safe to re-run.
 #
-#   STRIPE_SECRET_KEY=sk_test_... SUPABASE_ACCESS_TOKEN=sbp_... ./stripe-setup.sh
+#   NORTHLINE_STRIPE_SECRET_KEY=sk_test_... SUPABASE_ACCESS_TOKEN=sbp_... ./stripe-setup.sh
+#   (falls back to STRIPE_SECRET_KEY if NORTHLINE_STRIPE_SECRET_KEY is not set)
+#   Optional safety check: EXPECT_STRIPE_ACCOUNT=acct_... refuses to run against any other Stripe account.
 #
-# Going live: run it again with the LIVE secret key (sk_live_...). Test and live objects are separate in Stripe,
+# Going live: run it again with the LIVE secret key in NORTHLINE_STRIPE_SECRET_KEY (sk_live_...). Test and live objects are separate in Stripe,
 # so this creates the live product, prices, portal settings and webhook and switches Supabase over to them.
 #
 # What it does (idempotently):
@@ -22,9 +24,12 @@
 # Optional env: SUPABASE_PROJECT_REF (default fgvleepcryfqyrsabfgh), APP_URL, MIN_MONTHLY_PENCE (default 14900),
 #   PRICE_STARTER_PENCE / PRICE_PROFESSIONAL_PENCE / PRICE_ENTERPRISE_PENCE / PRICE_ONBOARDING_PENCE.
 set -euo pipefail
-: "${STRIPE_SECRET_KEY:?Set STRIPE_SECRET_KEY (sk_test_... or sk_live_...)}"
+# The key is read from NORTHLINE_STRIPE_SECRET_KEY first (so other bots/projects on a shared machine that use
+# STRIPE_SECRET_KEY cannot clash), falling back to STRIPE_SECRET_KEY.
+_KEY="${NORTHLINE_STRIPE_SECRET_KEY:-${STRIPE_SECRET_KEY:-}}"
+[[ -n "$_KEY" ]] || { echo "Set NORTHLINE_STRIPE_SECRET_KEY (sk_test_... or sk_live_...)" >&2; exit 1; }
 : "${SUPABASE_ACCESS_TOKEN:?Set SUPABASE_ACCESS_TOKEN (sbp_...)}"
-export STRIPE_SECRET_KEY="$(printf %s "$STRIPE_SECRET_KEY" | tr -d '[:space:]')"
+export STRIPE_SECRET_KEY="$(printf %s "$_KEY" | tr -d '[:space:]')"; unset _KEY
 export SUPABASE_ACCESS_TOKEN="$(printf %s "$SUPABASE_ACCESS_TOKEN" | tr -d '[:space:]')"
 export SUPABASE_PROJECT_REF="${SUPABASE_PROJECT_REF:-fgvleepcryfqyrsabfgh}"
 export APP_URL="${APP_URL:-https://josephbickley33-web.github.io/northline-os/app/}"
@@ -69,6 +74,8 @@ def stripe(method, path, params=None):
         sys.exit(f"Stripe {method} {path} failed: {body.get('error', {}).get('message', e.code)}")
 
 acct = stripe("GET", "account")
+if os.environ.get("EXPECT_STRIPE_ACCOUNT") and acct["id"] != os.environ["EXPECT_STRIPE_ACCOUNT"]:
+    sys.exit(f"Refusing: this key is for Stripe account {acct['id']}, expected {os.environ['EXPECT_STRIPE_ACCOUNT']}. Nothing was changed.")
 print(f"Stripe account {acct['id']} ({acct.get('country')}, {acct.get('default_currency','').upper()}) in {MODE} mode")
 
 def product(pid, name, desc):
