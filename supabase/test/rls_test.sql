@@ -1,4 +1,4 @@
--- LOCAL TESTING ONLY. Run after auth_stub.sql, schema.sql and seed.sql on a throwaway database.
+-- LOCAL TESTING ONLY. Run after auth_stub.sql, schema.sql, migrations/*.sql and seed.sql on a throwaway database.
 \set ON_ERROR_STOP 1
 create schema if not exists t;
 create or replace function t.expect_error(q text, label text) returns void language plpgsql as $$
@@ -18,6 +18,10 @@ insert into auth.users(id,email,raw_user_meta_data) values
 
 select t.expect((select role='admin' and active from profiles where email='boss@example.test'), 'first sign-up becomes active admin');
 select t.expect((select role='driver' and not active from profiles where email='amir@example.test'), 'later sign-up is inactive driver');
+select t.expect((select org_id is null from profiles where email='amir@example.test'), 'plain later sign-up has no organisation');
+select t.expect((select org_id='00000000-0000-4000-8000-000000000001' from profiles where email='boss@example.test'), 'first sign-up joins the default org');
+-- test setup: place the later sign-ups in the default org as pending members (as an admin-suspended member would be)
+update profiles set org_id='00000000-0000-4000-8000-000000000001' where email <> 'boss@example.test';
 
 -- ===== inactive driver sees nothing
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-00000000000b',false); set role authenticated;
@@ -36,7 +40,7 @@ update profiles set active=true, role='warehouse' where email='ware@example.test
 update jobs set notes=notes where ref='J-10482';  -- re-run driver linking
 select t.expect((select driver_id='00000000-0000-0000-0000-00000000000b' from jobs where ref='J-10482'),'driver name linked to member');
 update drivers_hours set notes=notes where driver_name='Amir Khan';
-select t.expect((select count(*) from audit_log where action='update profiles')=3, 'role/approval changes audited');
+select t.expect((select count(*) from audit_log where action='update profiles' and actor_name='Test Admin')=3, 'role/approval changes audited');
 select t.expect_error($q$update profiles set role='duty' where id=auth.uid()$q$, 'last admin demote');
 select t.expect_error($q$update ai_models set live=false where id='hours'$q$, 'switch off legal hours guard');
 update ai_models set live=false where id='yard';
