@@ -14,8 +14,8 @@
 #      northline_enterprise £25). One product per plan because the customer portal needs that to switch plans.
 #      Product "Northline onboarding" (id northline_onboarding) with one-off price northline_onboarding £495.
 #      If an amount changes here, a new price is created and the lookup key moves to it (old price archived).
-#      Pilot offer: coupon northline_pilot_50 (50% off the plan, 3 monthly invoices = 90 days, not the onboarding fee)
-#      and promotion code PILOT50 for Checkout.
+#      Pilot offer: coupon northline_pilot_50_1m (50% off the plan for 1 monthly invoice = 30 days, not the onboarding
+#      fee) and promotion code PILOT50 for Checkout. PILOT_MONTHS (default 1) changes the length.
 #   2. Customer portal configuration (cancel at period end, change plan/quantity, payment method, invoices).
 #   3. Webhook endpoint -> stripe-webhook function. Re-created on every run because Stripe only reveals the
 #      signing secret at creation; the secret goes straight into Supabase and is never printed or saved.
@@ -23,7 +23,7 @@
 #      STRIPE_PORTAL_CONFIGURATION, NORTHLINE_MIN_MONTHLY_PENCE, NORTHLINE_APP_URL.
 #   5. Redeploys the three billing functions (skip with SKIP_DEPLOY=1).
 #
-# Optional env: SUPABASE_PROJECT_REF (default fgvleepcryfqyrsabfgh), APP_URL, MIN_MONTHLY_PENCE (default 14900),
+# Optional env: PILOT_MONTHS (default 1), SUPABASE_PROJECT_REF (default fgvleepcryfqyrsabfgh), APP_URL, MIN_MONTHLY_PENCE (default 14900),
 #   PRICE_STARTER_PENCE / PRICE_PROFESSIONAL_PENCE / PRICE_ENTERPRISE_PENCE / PRICE_ONBOARDING_PENCE.
 set -euo pipefail
 # The key is read from NORTHLINE_STRIPE_SECRET_KEY first (so other bots/projects on a shared machine that use
@@ -47,7 +47,8 @@ P = lambda k, d: int(os.environ.get(k, d))
 PRICES = {"starter": P("PRICE_STARTER_PENCE", 900), "professional": P("PRICE_PROFESSIONAL_PENCE", 1500), "enterprise": P("PRICE_ENTERPRISE_PENCE", 2500)}
 ONBOARD = P("PRICE_ONBOARDING_PENCE", 49500); MINP = P("MIN_MONTHLY_PENCE", 14900)
 HOOK = f"https://{REF}.supabase.co/functions/v1/stripe-webhook"
-EVENTS = ["checkout.session.completed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"]
+EVENTS = ["checkout.session.completed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted",
+          "invoice.created"]   # invoice.created: adds deferred pilot onboarding to the first full-price invoice
 
 def enc(d, prefix="", out=None):
     out = [] if out is None else out
@@ -113,22 +114,31 @@ print(f"  price northline_onboarding    £{ONBOARD/100:.2f} one-off        {ids[
 for plan, amount in PRICES.items():
     q = max(1, -(-MINP // amount)); print(f"  minimum {plan}: {q} vehicles = £{q*amount/100:.2f}/month")
 
-# Pilot: half price on the plan for the first 3 monthly invoices (90 days). Onboarding is not discounted.
-PILOT = {"percent_off": 50, "duration": "repeating", "duration_in_months": 3, "currency": None}
-c = stripe("GET", "coupons/northline_pilot_50", {"expand": ["applies_to"]})
+# Pilot: half price on the plan for the first PILOT_MONTHS monthly invoices (default 1 = 30 days). Onboarding is not discounted.
+# Coupons are immutable, so the coupon id includes the length (northline_pilot_50_1m); a change of length creates a new
+# coupon, moves the PILOT50 code to it and deletes the old pilot coupons (customers already on a discount keep it).
+PILOT_MONTHS = P("PILOT_MONTHS", 1)
+PILOT_ID = f"northline_pilot_50_{PILOT_MONTHS}m"
 want_products = sorted(prods.values())
-if c and (c.get("percent_off") != 50 or c.get("duration_in_months") != 3 or sorted((c.get("applies_to") or {}).get("products", [])) != want_products):
-    stripe("DELETE", "coupons/northline_pilot_50"); c = None   # coupons are immutable; existing customers keep their discount
+c = stripe("GET", f"coupons/{PILOT_ID}", {"expand": ["applies_to"]})
+if c and (c.get("percent_off") != 50 or c.get("duration") != "repeating" or c.get("duration_in_months") != PILOT_MONTHS
+          or sorted((c.get("applies_to") or {}).get("products", [])) != want_products):
+    stripe("DELETE", f"coupons/{PILOT_ID}"); c = None
 if c is None:
-    c = stripe("POST", "coupons", {"id": "northline_pilot_50", "name": "Northline pilot: half price for 90 days", "percent_off": 50,
-                                    "duration": "repeating", "duration_in_months": 3, "applies_to": {"products": want_products},
-                                    "metadata": {"northline": "1"}})
-codes = stripe("GET", "promotion_codes", {"code": "PILOT50", "limit": 10})["data"]
-live = [x for x in codes if x["active"] and x["coupon"]["id"] == c["id"] and x["coupon"].get("valid", True)]
+    days = 30 * PILOT_MONTHS
+    c = stripe("POST", "coupons", {"id": PILOT_ID, "name": f"Northline pilot: half price for {days} days", "percent_off": 50,
+                                    "duration": "repeating", "duration_in_months": PILOT_MONTHS, "applies_to": {"products": want_products},
+                                    "metadata": {"northline": "1", "pilot": "1"}})
+codes = stripe("GET", "promotion_codes", {"code": "PILOT50", "limit": 100})["data"]
+live = [x for x in codes if x["active"] and x["coupon"]["id"] == c["id"]]
 for x in codes:
-    if x["active"] and x not in live: stripe("POST", f"promotion_codes/{x['id']}", {"active": False})
+    if x["active"] and x["coupon"]["id"] != c["id"]: stripe("POST", f"promotion_codes/{x['id']}", {"active": False})
 promo = live[0] if live else stripe("POST", "promotion_codes", {"coupon": c["id"], "code": "PILOT50", "metadata": {"northline": "1"}})
-print(f"  pilot coupon {c['id']} (50% off plan for 3 months), promotion code PILOT50 {promo['id']} ({'kept' if live else 'created'})")
+old_coupons = [x["id"] for x in stripe("GET", "coupons", {"limit": 100})["data"]
+               if x["id"] != c["id"] and (x["id"] == "northline_pilot_50" or x["id"].startswith("northline_pilot_50_"))]
+for oc in old_coupons: stripe("DELETE", f"coupons/{oc}")
+print(f"  pilot coupon {c['id']} (50% off plan for {PILOT_MONTHS} month(s)), promotion code PILOT50 {promo['id']} ({'kept' if live else 'created'})"
+      + (f"; removed old coupons {', '.join(old_coupons)}" if old_coupons else ""))
 
 portal = {
     "business_profile": {"headline": "Northline: manage plan, vehicles, card and invoices"},

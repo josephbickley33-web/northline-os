@@ -1042,7 +1042,9 @@ function billingTab(top){
       kpi("Vehicles", num(o.vehicles_used) + " / " + limit, "Sold vehicles do not count", o.vehicle_limit != null && o.vehicles_used >= o.vehicle_limit ? "warn" : "") + kpi("Active members", num(o.members), "Unlimited users on every plan") + '</div>' +
       (connected && st.data.test_mode ? '<div class="alert warn test-mode" id="billingTestMode" role="status"><strong>Test mode: no real money.</strong> Payments go through Stripe\'s test system. Use card 4242 4242 4242 4242, any future date and any CVC. Nothing is charged.</div>' : "") +
       (connected ? "" : '<div class="alert info" id="billingNotConnected"><strong>Billing not connected yet.</strong> Your free trial keeps working. Card payments switch on once the Stripe account is linked.</div>') +
-      '<section><h2>Plans</h2><p class="intro">Per vehicle, per month, in pounds, excluding VAT. Minimum monthly charge of about £149: at least 17 vehicles on Starter (£153), 10 on Professional (£150) or 6 on Enterprise (£150). Onboarding from £495, one-off. Pilot customers: enter code PILOT50 at checkout for half price on the plan for the first 90 days.</p><div class="plan-grid">' +
+      '<section><h2>Plans</h2><p class="intro">Per vehicle, per month, in pounds, excluding VAT. Minimum monthly charge of about £149: at least 17 vehicles on Starter (£153), 10 on Professional (£150) or 6 on Enterprise (£150). Onboarding from £495, one-off.</p>' +
+      (connected && !o.billing_linked ? '<div class="card pilot-code"><label for="pilotCode"><strong>Pilot code</strong> (optional)</label><p class="muted">Pilot customers pay half price for the first 30 days. Onboarding is waived if you cancel during the pilot; £495 is added to your first full bill if you continue.</p><input id="pilotCode" name="pilot_code" autocomplete="off" autocapitalize="characters" placeholder="e.g. PILOT50" maxlength="40"></div>' : '') +
+      '<div class="plan-grid">' +
       PLAN_INFO.map(function(p){ var current = o.plan === p.id && o.status !== "trial";
         return '<div class="card plan-card' + (p.id === "professional" ? " featured" : "") + '"><h3>' + p.name + (current ? " " + pill("Current","ok") : "") + '</h3><div class="plan-price">£' + p.price + '<small> / vehicle / month</small></div><ul>' +
           p.features.map(function(f){ return "<li>" + esc(f) + "</li>"; }).join("") + '</ul><button class="btn ' + (p.id === "professional" ? "primary" : "") + '" type="button" data-plan="' + p.id + '"' + (current ? " disabled" : "") + '>' + (current ? "Your plan" : "Choose " + p.name) + '</button></div>'; }).join("") +
@@ -1055,7 +1057,8 @@ function bindBilling(root){
   var say = function(m, t){ var el = root.querySelector("#billingMsg"); if (el) { el.textContent = m; el.className = "msg-line " + (t || ""); } };
   Array.prototype.forEach.call(root.querySelectorAll("[data-plan]"), function(b){ b.onclick = function(){
     b.disabled = true; say("Opening secure checkout…");
-    invokeFn("billing-checkout", { plan:b.dataset.plan }).then(function(r){
+    var pc = root.querySelector("#pilotCode"), code = pc ? pc.value.trim() : "";
+    invokeFn("billing-checkout", code ? { plan:b.dataset.plan, promo_code:code } : { plan:b.dataset.plan }).then(function(r){
       b.disabled = false;
       if (r.data && r.data.url) { location.href = r.data.url; return; }
       if (r.data && r.data.configured === false) return say("Billing not connected yet. Your free trial keeps working, and nothing has been charged.", "");

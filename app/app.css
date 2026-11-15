@@ -58,3 +58,7 @@ button.row{width:100%;font:inherit;cursor:pointer}
 .sig-pad{display:block;width:100%;height:180px;border:1px dashed var(--line-2);border-radius:12px;background:#fff;touch-action:none}
 .photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}.photo-grid img{width:100%;border-radius:10px;display:block}
 @media(max-width:980px){.plan-grid{grid-template-columns:1fr}.org-banner{padding:10px 16px 0}}
+
+.pilot-code{margin:0 0 16px;padding:16px}
+.pilot-code input{display:block;margin-top:8px;max-width:260px;width:100%;padding:10px 12px;border:1px solid var(--line,#d5dde5);border-radius:10px;font:inherit;text-transform:uppercase}
+.pilot-code .muted{margin:4px 0 0;font-size:13px;color:var(--muted,#5b6778)}

@@ -36,18 +36,33 @@ export const handler = handle(async (req) => {
     await updateOrg(org.id, { stripe_customer_id: customer });
   }
 
+  // Pilot code (e.g. PILOT50), entered in the app. A pilot coupon (metadata pilot=1) defers onboarding: nothing is charged
+  // for it at checkout; the webhook adds it to the first full-price invoice if the subscription continues after the pilot.
+  // Stripe's own promotion-code box is not offered, so the pilot can only be applied here, where onboarding is handled.
+  const promoCode = String(body.promo_code ?? "").trim().toUpperCase();
+  let discounts: Record<string, unknown>[] | undefined; let pilot = false;
+  if (promoCode) {
+    if (!/^[A-Z0-9_-]{2,40}$/.test(promoCode)) throw new HttpError(400, "That code is not valid");
+    const pc = (await stripe("GET", "promotion_codes", { code: promoCode, active: "true", limit: 1 })).data?.[0];
+    if (!pc) throw new HttpError(400, "That code is not valid or has expired");
+    discounts = [{ promotion_code: pc.id }];
+    pilot = pc.coupon?.metadata?.pilot === "1";
+  }
   const line_items: Record<string, unknown>[] = [{ price: priceIdFor(plan), quantity }];
   const onboarding = env("STRIPE_PRICE_ONBOARDING");
-  if (onboarding && !org.stripe_subscription_id) line_items.push({ price: onboarding, quantity: 1 });
+  const chargeOnboarding = !!onboarding && !org.stripe_subscription_id;
+  if (chargeOnboarding && !pilot) line_items.push({ price: onboarding, quantity: 1 });
+  const subMeta: Record<string, string> = { org_id: org.id, plan };
+  if (chargeOnboarding && pilot) subMeta.onboarding_deferred = "true";
 
   const session = await stripe("POST", "checkout/sessions", {
     mode: "subscription",
     customer,
     line_items,
     client_reference_id: org.id,
-    metadata: { org_id: org.id, plan },
-    subscription_data: { metadata: { org_id: org.id, plan } },
-    allow_promotion_codes: "true",
+    metadata: { org_id: org.id, plan, ...(promoCode ? { promo_code: promoCode } : {}) },
+    subscription_data: { metadata: subMeta },
+    ...(discounts ? { discounts } : {}),
     billing_address_collection: "required",
     customer_update: { address: "auto", name: "auto" },
     tax_id_collection: { enabled: "true" },
@@ -55,7 +70,7 @@ export const handler = handle(async (req) => {
     success_url: appUrl() + "?billing=success",
     cancel_url: appUrl() + "?billing=cancelled",
   });
-  return json({ url: session.url, quantity });
+  return json({ url: session.url, quantity, pilot, onboarding_deferred: subMeta.onboarding_deferred === "true" });
 });
 
 

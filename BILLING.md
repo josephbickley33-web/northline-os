@@ -18,7 +18,7 @@ It creates or updates, idempotently, in the Stripe account the key belongs to:
 | Products | `northline_starter`, `northline_professional`, `northline_enterprise` ("Northline Starter/Professional/Enterprise"), `northline_onboarding` |
 | Prices (GBP, tax exclusive) | lookup keys `northline_starter` £9, `northline_professional` £15, `northline_enterprise` £25: monthly, per vehicle. `northline_onboarding` £495 one-off ("from £495"; quote larger jobs separately) |
 | Customer portal | its own configuration (metadata `northline=1`): cancel at period end, change plan, change number of vehicles, update card, invoice history, billing details |
-| Webhook | `https://fgvleepcryfqyrsabfgh.supabase.co/functions/v1/stripe-webhook` for `checkout.session.completed` and `customer.subscription.created`, `.updated` and `.deleted`. Re-created on each run, because Stripe only shows the signing secret once |
+| Webhook | `https://fgvleepcryfqyrsabfgh.supabase.co/functions/v1/stripe-webhook` for `checkout.session.completed`, `customer.subscription.created`, `.updated` and `.deleted`, and `invoice.created` (deferred pilot onboarding). Re-created on each run, because Stripe only shows the signing secret once |
 
 It then sets these Supabase Edge Function secrets through the Management API and redeploys the functions:
 `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PROFESSIONAL`, `STRIPE_PRICE_ENTERPRISE`,
@@ -27,14 +27,20 @@ It then sets these Supabase Edge Function secrets through the Management API and
 One product per plan is needed because Stripe's customer portal can only switch between, or change the quantity of,
 products that each have a single monthly price.
 
-## Pilot offer: half price for 90 days
+## Pilot offer: half price for 30 days
 
 | Object | Details |
 |---|---|
-| Coupon `northline_pilot_50` | 50% off the plan line, repeating for 3 monthly invoices (90 days). The onboarding fee is not discounted |
-| Promotion code `PILOT50` | The customer enters it on the Stripe Checkout page ("Add promotion code") |
+| Coupon `northline_pilot_50_1m` | 50% off the plan, for 1 monthly invoice (30 days). Metadata `pilot=1`. The onboarding fee is not discounted |
+| Promotion code `PILOT50` | The customer enters it in the app (Admin › Billing › Pilot code) before choosing a plan |
 
-To give a pilot customer the discount after they have subscribed, open the subscription in the Stripe dashboard and choose Add coupon › `northline_pilot_50`.
+**Onboarding for pilot customers:** waived if they cancel during the pilot; £495 is added to their first full bill if they continue.
+
+* With a pilot code, `billing-checkout` applies the discount itself, leaves the onboarding line out, and sets subscription metadata `onboarding_deferred=true`.
+* When Stripe creates the first renewal invoice (`invoice.created`, `billing_reason=subscription_cycle`, still a draft), `stripe-webhook` adds the onboarding price to it once and sets `onboarding_deferred=false` plus `onboarding_invoice=<invoice id>`.
+* If the customer cancels during the pilot, no renewal invoice is created, so onboarding is never charged.
+* Stripe's own promotion-code box is switched off at Checkout, so the pilot can only be applied through the app, where onboarding is handled. Non-pilot checkouts are otherwise unchanged: plan plus onboarding on the first invoice.
+* Changing the pilot length: `PILOT_MONTHS=2 ./stripe-setup.sh` creates `northline_pilot_50_2m`, moves `PILOT50` to it and deletes the old pilot coupons. Customers already on a pilot keep their discount.
 
 ## Monthly minimum (£149)
 

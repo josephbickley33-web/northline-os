@@ -58,10 +58,12 @@ function form(params: Record<string, unknown>, prefix = "", out = new URLSearchP
   }
   return out;
 }
-export async function stripe(method: "GET" | "POST", path: string, params?: Record<string, unknown>) {
+// idempotencyKey: Stripe returns the first result for repeated POSTs with the same key (24 h), so retried webhooks cannot double-charge.
+export async function stripe(method: "GET" | "POST", path: string, params?: Record<string, unknown>, idempotencyKey?: string) {
   const url = new URL("https://api.stripe.com/v1/" + path);
   const init: RequestInit = { method, headers: { Authorization: "Bearer " + env("STRIPE_SECRET_KEY"), "Stripe-Version": "2024-06-20" } };
   if (params && method === "GET") form(params).forEach((v, k) => url.searchParams.append(k, v));
+  if (idempotencyKey) (init.headers as Record<string, string>)["Idempotency-Key"] = idempotencyKey;
   if (params && method === "POST") {
     (init.headers as Record<string, string>)["Content-Type"] = "application/x-www-form-urlencoded";
     init.body = form(params).toString();

@@ -1,6 +1,6 @@
 // Stripe -> Northline. Deployed with --no-verify-jwt (Stripe does not send a Supabase JWT);
 // every request is authenticated with the Stripe-Signature header instead.
-// Events: checkout.session.completed, customer.subscription.created|updated|deleted
+// Events: checkout.session.completed, customer.subscription.created|updated|deleted, invoice.created
 import { env, json, minQuantity, planForPrice, rest, stripe, updateOrg } from "../_shared/billing.ts";
 
 const enc = new TextEncoder();
@@ -56,6 +56,36 @@ async function syncSubscription(sub: any) {
   await updateOrg(orgId, patch);
 }
 
+// Pilot customers pay no onboarding at checkout (subscription metadata onboarding_deferred=true). When the first renewal
+// invoice is created (still a draft, so it can be edited), add the onboarding fee to it once and clear the flag.
+// If they cancel during the pilot there is no renewal invoice, so they never pay it.
+// deno-lint-ignore no-explicit-any
+async function addDeferredOnboarding(inv: any) {
+  const price = env("STRIPE_PRICE_ONBOARDING");
+  if (!price || !inv?.subscription || inv.billing_reason !== "subscription_cycle" || inv.status !== "draft") return;
+  const sub = await stripe("GET", "subscriptions/" + inv.subscription);
+  if (sub.metadata?.onboarding_deferred !== "true" || sub.status === "canceled") return;
+  // Read the invoice's current lines (the event payload can be stale when Stripe retries a delivery), and the customer's
+  // invoice items, so onboarding is charged once per subscription even if clearing the flag below ever fails.
+  const lines = await stripe("GET", `invoices/${inv.id}/lines`, { limit: 100 });
+  // deno-lint-ignore no-explicit-any
+  const onThisInvoice = (lines.data ?? []).some((l: any) => l.price?.id === price);
+  const items = await stripe("GET", "invoiceitems", { customer: inv.customer, limit: 100 });
+  // deno-lint-ignore no-explicit-any
+  const chargedBefore = (items.data ?? []).some((it: any) => it.metadata?.reason === "pilot_onboarding" && it.metadata?.subscription === sub.id);
+  if (!onThisInvoice && !chargedBefore) {
+    // Idempotency key per invoice: a concurrent or retried delivery gets the same invoice item back, never a second one.
+    await stripe("POST", "invoiceitems", { customer: inv.customer, invoice: inv.id, price, quantity: 1,
+      description: "Northline onboarding (deferred from pilot)",
+      metadata: { org_id: sub.metadata?.org_id ?? "", subscription: sub.id, reason: "pilot_onboarding" } },
+      `northline-onboarding-${inv.id}`);
+  }
+  // Best effort: the checks above already prevent a second charge, so a failure here must not hold the invoice in draft.
+  try {
+    await stripe("POST", "subscriptions/" + sub.id, { metadata: { onboarding_deferred: "false", onboarding_invoice: inv.id } });
+  } catch (e) { console.warn("Could not clear onboarding_deferred on", sub.id, e); }
+}
+
 export const handler = async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
   const secret = env("STRIPE_WEBHOOK_SECRET");
@@ -69,6 +99,8 @@ export const handler = async (req: Request): Promise<Response> => {
       const sub = await stripe("GET", "subscriptions/" + obj.subscription);
       if (!sub.metadata?.org_id && obj.client_reference_id) sub.metadata = { ...(sub.metadata ?? {}), org_id: obj.client_reference_id };
       await syncSubscription(sub);
+    } else if (event.type === "invoice.created") {
+      await addDeferredOnboarding(obj);
     } else if (event.type.startsWith("customer.subscription.")) {
       await syncSubscription(event.type === "customer.subscription.deleted" ? { ...obj, status: "canceled" } : obj);
     }

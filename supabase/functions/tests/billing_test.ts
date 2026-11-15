@@ -106,3 +106,82 @@ Deno.test("webhook: past_due and deleted", async () => {
   await hook({ type: "customer.subscription.deleted", data: { object: { id: "sub_1", customer: "cus_1", status: "active", metadata: {}, items: { data: [] } } } });
   eq((patches.at(-1) as Record<string, unknown>).status, "cancelled", "cancelled (org found by customer id)");
 });
+
+// Deferred pilot onboarding: a retried invoice.created must not add a second onboarding item.
+Deno.test("deferred onboarding is added once, with an idempotency key, even when the event is delivered twice", async () => {
+  Deno.env.set("STRIPE_SECRET_KEY", "sk_test_x"); Deno.env.set("STRIPE_WEBHOOK_SECRET", "whsec_test");
+  Deno.env.set("STRIPE_PRICE_ONBOARDING", "price_onb"); Deno.env.set("STRIPE_PRICE_PROFESSIONAL", "price_pro");
+  Deno.env.set("SUPABASE_URL", "http://sb.local"); Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "svc");
+  const { handler } = await import("../stripe-webhook/handler.ts");
+  const invoiceLines: Array<{ price: { id: string } }> = [{ price: { id: "price_pro" } }];
+  const subMeta: Record<string, string> = { onboarding_deferred: "true", org_id: "org1" };
+  const posts: Array<{ url: string; key: string | null }> = [];
+  const created: Array<{ id: string; invoice: string; metadata: Record<string, string> }> = [];
+  let failSubUpdate = true;   // first attempt: Stripe refuses the subscription update (e.g. test clock advancing)
+  const seenKeys = new Set<string>();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input); const h = new Headers(init?.headers);
+    const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/v1/subscriptions/sub_1") && init?.method === "GET") return ok({ id: "sub_1", status: "active", metadata: subMeta });
+    if (url.includes("/v1/invoices/in_1/lines")) return ok({ data: invoiceLines });
+    if (url.includes("/v1/invoiceitems?")) return ok({ data: created });
+    if (url.endsWith("/v1/invoiceitems")) {
+      posts.push({ url, key: h.get("Idempotency-Key") });
+      const k = h.get("Idempotency-Key") ?? "";
+      const bp = new URLSearchParams(String(init?.body));
+      if (!seenKeys.has(k)) { seenKeys.add(k); invoiceLines.push({ price: { id: "price_onb" } });
+        created.push({ id: "ii_" + created.length, invoice: bp.get("invoice") ?? "", metadata: { reason: bp.get("metadata[reason]") ?? "", subscription: bp.get("metadata[subscription]") ?? "" } }); }
+      return ok({ id: "ii_1" });
+    }
+    if (url.includes("/v1/subscriptions/sub_1") && init?.method === "POST") {
+      if (failSubUpdate) { failSubUpdate = false; return new Response(JSON.stringify({ error: { message: "test clock advancing" } }), { status: 400 }); }
+      const p = new URLSearchParams(String(init.body)); subMeta.onboarding_deferred = p.get("metadata[onboarding_deferred]") ?? ""; return ok({ id: "sub_1" });
+    }
+    return ok({});
+  }) as typeof fetch;
+  try {
+    const payload = JSON.stringify({ type: "invoice.created", data: { object: { id: "in_1", subscription: "sub_1", customer: "cus_1",
+      billing_reason: "subscription_cycle", status: "draft", lines: { data: [{ price: { id: "price_pro" } }] } } } });
+    const sign = async () => {
+      const t = Math.floor(Date.now() / 1000);
+      const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("whsec_test"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${payload}`)));
+      return `t=${t},v1=` + Array.from(mac).map((b) => b.toString(16).padStart(2, "0")).join("");
+    };
+    // Attempt 1: item created, flag update refused (must still answer 200). Attempt 2: retry with the flag still set.
+    for (let i = 0; i < 2; i++) {
+      const res = await handler(new Request("http://x/", { method: "POST", body: payload, headers: { "Stripe-Signature": await sign() } }));
+      if (res.status !== 200) throw new Error("status " + res.status);
+    }
+    const onb = invoiceLines.filter((l) => l.price.id === "price_onb").length;
+    if (onb !== 1) throw new Error("onboarding lines: " + onb);
+    if (created.length !== 1 || created[0].metadata.subscription !== "sub_1") throw new Error("items: " + JSON.stringify(created));
+    if (!posts.every((p) => p.key === "northline-onboarding-in_1")) throw new Error("missing idempotency key");
+    if (subMeta.onboarding_deferred !== "false") throw new Error("flag not cleared");
+  } finally { globalThis.fetch = realFetch; }
+});
+
+Deno.test("deferred onboarding is not added to a later invoice once it was charged", async () => {
+  Deno.env.set("STRIPE_SECRET_KEY", "sk_test_x"); Deno.env.set("STRIPE_WEBHOOK_SECRET", "whsec_test"); Deno.env.set("STRIPE_PRICE_ONBOARDING", "price_onb");
+  const { handler } = await import("../stripe-webhook/handler.ts");
+  let posted = 0; const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input); const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    if (url.includes("/v1/subscriptions/sub_2") && init?.method === "GET") return ok({ id: "sub_2", status: "active", metadata: { onboarding_deferred: "true" } });
+    if (url.includes("/v1/invoices/in_3/lines")) return ok({ data: [{ price: { id: "price_pro" } }] });
+    if (url.includes("/v1/invoiceitems?")) return ok({ data: [{ id: "ii_old", invoice: "in_2", metadata: { reason: "pilot_onboarding", subscription: "sub_2" } }] });
+    if (url.endsWith("/v1/invoiceitems")) { posted++; return ok({ id: "ii_new" }); }
+    return ok({});
+  }) as typeof fetch;
+  try {
+    const payload = JSON.stringify({ type: "invoice.created", data: { object: { id: "in_3", subscription: "sub_2", customer: "cus_2", billing_reason: "subscription_cycle", status: "draft" } } });
+    const t = Math.floor(Date.now() / 1000);
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("whsec_test"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${payload}`)));
+    const sig = `t=${t},v1=` + Array.from(mac).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const res = await handler(new Request("http://x/", { method: "POST", body: payload, headers: { "Stripe-Signature": sig } }));
+    if (res.status !== 200) throw new Error("status " + res.status);
+    if (posted !== 0) throw new Error("onboarding charged twice");
+  } finally { globalThis.fetch = realFetch; }
+});
